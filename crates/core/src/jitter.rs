@@ -36,6 +36,8 @@ pub struct JitterBuffer {
     target_bytes: usize,
     capacity_bytes: usize,
     started: bool,
+    /// 处于饥饿（缓冲耗尽）状态；欠载事件只在进入饥饿时计一次。
+    starving: bool,
     stats: JitterStats,
 }
 
@@ -57,6 +59,7 @@ impl JitterBuffer {
             target_bytes: bytes_per_ms * target_ms.max(0) as usize,
             capacity_bytes: (bytes_per_ms * max_ms as usize).max(bytes_per_ms * frame_ms as usize),
             started: false,
+            starving: false,
             stats: JitterStats::default(),
         }
     }
@@ -122,8 +125,13 @@ impl JitterBuffer {
                 }
             }
         }
-        if was_empty && filled == 0 {
+        if was_empty && filled == 0 && !self.starving {
             self.stats.underruns += 1;
+        }
+        if filled == 0 {
+            self.starving = true;
+        } else {
+            self.starving = false;
         }
         self.stats.popped_bytes += filled as u64;
         filled
@@ -163,6 +171,7 @@ impl JitterBuffer {
     pub fn reset(&mut self) {
         self.queue.clear();
         self.started = false;
+        self.starving = false;
     }
 }
 

@@ -18,3 +18,8 @@ thiserror = "1"
 [profile.release]
 opt-level = 2
 lto = "thin"
+
+# 本机内存/页面文件有限：减小调试信息并提示用 -j 2 构建
+[profile.dev]
+debug = 0
+

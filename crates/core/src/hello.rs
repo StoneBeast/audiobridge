@@ -35,6 +35,17 @@ pub const MSG_PONG: u8 = 5;
 /// 双向：结束会话。
 pub const MSG_BYE: u8 = 6;
 
+impl std::fmt::Display for Hello {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Hello(name={}, codec={:?}, rate={}, ch={}, frame_ms={}, target_ms={})",
+            self.device_name, self.codec, self.sample_rate, self.channels, self.frame_ms,
+            self.buffer_target_ms
+        )
+    }
+}
+
 /// 发起方（音频发送端）在握手阶段发出的请求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hello {
@@ -57,7 +68,11 @@ pub struct Hello {
 impl Hello {
     pub fn to_bytes(&self) -> Vec<u8> {
         let name = self.device_name.as_bytes();
-        let name_len = name.len().min(MAX_NAME_LEN);
+        // 截断必须落在 UTF-8 字符边界上，否则对端解码失败
+        let mut name_len = name.len().min(MAX_NAME_LEN);
+        while name_len > 0 && std::str::from_utf8(&name[..name_len]).is_err() {
+            name_len -= 1;
+        }
         let mut b = Vec::with_capacity(2 + name_len + 1 + 4 + 1 + 2 + 2 + 32);
         b.extend_from_slice(&(name_len as u16).to_le_bytes());
         b.extend_from_slice(&name[..name_len]);
@@ -100,6 +115,16 @@ impl Hello {
             buffer_target_ms,
             auth_token_sha256,
         })
+    }
+}
+
+impl std::fmt::Display for HelloAck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "HelloAck(status={:?}, name={}, rate={}, ch={}, jitter_ms={})",
+            self.status, self.device_name, self.sample_rate, self.channels, self.jitter_target_ms
+        )
     }
 }
 
@@ -226,9 +251,15 @@ mod tests {
     fn hello_roundtrip_with_token_and_long_name() {
         let mut h = sample_hello();
         h.auth_token_sha256 = core::array::from_fn(|i| i as u8);
-        h.device_name = "很长的设备名 ".repeat(30); // 180 字节
+        h.device_name = "很长的设备名 ".repeat(30); // 570 字节，超过 255 上限
         let bytes = h.to_bytes();
-        assert_eq!(Hello::from_bytes(&bytes).unwrap(), h);
+        let got = Hello::from_bytes(&bytes).unwrap();
+        // 超长名应按 UTF-8 字符边界截断到 255 字节以内，且是原名的前缀
+        assert!(got.device_name.as_bytes().len() <= 255);
+        assert!(h.device_name.starts_with(&got.device_name));
+        assert_eq!(got.auth_token_sha256, h.auth_token_sha256);
+        // 截断后的消息再编码应保持稳定（幂等）
+        assert_eq!(Hello::from_bytes(&got.to_bytes()).unwrap(), got);
     }
 
     #[test]

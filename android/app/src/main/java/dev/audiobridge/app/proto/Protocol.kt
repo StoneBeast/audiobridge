@@ -34,6 +34,17 @@ object Protocol {
     fun s16BytesPerMs(sampleRate: Int, channels: Int): Int =
         sampleRate * channels * 2 / 1000
 
+    /**
+     * 把设备名字节截断到 MAX_NAME_LEN 以内，且必须落在 UTF-8 字符边界上
+     * （与 Rust 实现行为一致，否则对端解码失败）。
+     */
+    fun truncateUtf8(name: ByteArray): ByteArray {
+        if (name.size <= MAX_NAME_LEN) return name
+        var len = MAX_NAME_LEN
+        while (len > 0 && (name[len].toInt() and 0xC0) == 0x80) len-- // 回退到非续字节
+        return name.copyOf(len)
+    }
+
     fun msgTypeName(type: Int): String = when (type) {
         MSG_HELLO -> "HELLO"
         MSG_HELLO_ACK -> "HELLO_ACK"
@@ -76,9 +87,7 @@ class Hello(
     val authTokenSha256: ByteArray,
 ) {
     fun toBytes(): ByteArray {
-        val name = deviceName.toByteArray(Charsets.UTF_8).let {
-            if (it.size > Protocol.MAX_NAME_LEN) it.copyOf(Protocol.MAX_NAME_LEN) else it
-        }
+        val name = Protocol.truncateUtf8(deviceName.toByteArray(Charsets.UTF_8))
         return ByteWriter()
             .u16(name.size).bytes(name)
             .u8(codec.toInt() and 0xFF)
@@ -122,9 +131,7 @@ class HelloAck(
     val jitterTargetMs: Int,
 ) {
     fun toBytes(): ByteArray {
-        val name = deviceName.toByteArray(Charsets.UTF_8).let {
-            if (it.size > Protocol.MAX_NAME_LEN) it.copyOf(Protocol.MAX_NAME_LEN) else it
-        }
+        val name = Protocol.truncateUtf8(deviceName.toByteArray(Charsets.UTF_8))
         return ByteWriter()
             .u8(status)
             .u8(codec.toInt() and 0xFF)

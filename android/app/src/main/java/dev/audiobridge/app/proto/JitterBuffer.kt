@@ -26,6 +26,9 @@ class JitterBuffer(
         maxOf(bytesPerMs * maxOf(1, maxMs), chunkBytes)
     private var started = false
 
+    /** 处于饥饿（缓冲耗尽）状态；欠载事件只在进入饥饿时计一次。 */
+    private var starving = false
+
     private var pushedBytesTotal = 0L
     private var poppedBytesTotal = 0L
     private var droppedBytesTotal = 0L
@@ -86,7 +89,8 @@ class JitterBuffer(
             }
             filled += take
         }
-        if (wasEmpty && filled == 0) underrunsTotal += 1
+        if (wasEmpty && filled == 0 && !starving) underrunsTotal += 1
+        starving = filled == 0
         poppedBytesTotal += filled
         return filled
     }
@@ -105,6 +109,7 @@ class JitterBuffer(
     fun reset() {
         queue.clear()
         started = false
+        starving = false
     }
 
     private fun bufferedBytesInternal(): Int = queue.sumOf { it.size }

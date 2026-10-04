@@ -117,7 +117,7 @@ fn busy_second_connection_rejected() {
     std::thread::sleep(Duration::from_millis(200));
 
     // 连接 2：应收到 BUSY
-    let c2 = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let mut c2 = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
     let mut w2 = c2.try_clone().unwrap();
     send_hello(
         &mut w2,

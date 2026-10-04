@@ -16,7 +16,7 @@ use audiobridge_core::framing::{
 use audiobridge_core::hello::{Hello, HelloAck};
 use serde::Serialize;
 
-#[derive(Serialize)]
+#[derive(Serialize, serde::Deserialize)]
 struct Case {
     name: String,
     kind: String,
@@ -24,7 +24,7 @@ struct Case {
     fields: serde_json::Value,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, serde::Deserialize)]
 struct Vectors {
     protocol_version: u8,
     note: String,

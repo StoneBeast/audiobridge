@@ -22,9 +22,10 @@ use crate::codec::{s16_bytes_per_ms, Codec, SAMPLE_RATE};
 use crate::error::Result;
 use crate::framing::{
     bye_payload, read_hello, read_hello_ack, read_message, send_hello, send_hello_ack,
-    write_message, DataPayload, MSG_BYE, MSG_DATA, MSG_PING, MSG_PONG,
+    write_message, DataPayload,
 };
-use crate::hello::{AckStatus, Hello, HelloAck};
+use crate::error::AckStatus;
+use crate::hello::{Hello, HelloAck, MSG_BYE, MSG_DATA, MSG_PING, MSG_PONG};
 use crate::jitter::JitterBuffer;
 use crate::pcm::apply_volume_s16;
 use crate::queue::{ChunkQueue, Recv};
@@ -267,6 +268,9 @@ pub fn run_sender(
                     Recv::Closed => break,
                 }
             }
+            // 礼节性 BYE（对端可能已关闭，忽略错误）
+            let _ = write_message(&mut write_half, MSG_BYE, &bye_payload(0, "bye"));
+            let _ = write_half.shutdown(Shutdown::Both);
         })?;
 
     let mut buf = vec![0u8; chunk_bytes];
@@ -292,9 +296,6 @@ pub fn run_sender(
     stop.store(true, Ordering::Relaxed);
     net_stop.store(true, Ordering::Relaxed);
     queue.close();
-    // 尽力礼节性 BYE（写线程可能已退出，忽略错误）
-    let _ = write_message(&mut write_half, MSG_BYE, &bye_payload(0, "bye"));
-    let _ = write_half.shutdown(Shutdown::Both);
     let _ = stream.shutdown(Shutdown::Both);
     let _ = net_thread.join();
     upd(&stats, |s| s.connected = false);
@@ -433,7 +434,9 @@ fn conn_loop(
     stop: Arc<AtomicBool>,
     active: Arc<AtomicBool>,
 ) {
-    stream.set_nodelay().ok();
+    // Windows 上 accept 出的 socket 会继承监听端的非阻塞标志，必须恢复阻塞模式
+    stream.set_nonblocking(false).ok();
+    stream.set_nodelay(true).ok();
 
     // 已有活跃会话 -> BUSY
     if active.load(Ordering::Relaxed) {

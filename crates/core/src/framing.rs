@@ -10,7 +10,11 @@ use std::io::{Read, Write};
 
 use crate::codec::MAX_PAYLOAD;
 use crate::error::{Error, Result};
-use crate::hello::{Hello, HelloAck, MAGIC, MSG_BYE, MSG_DATA, MSG_HELLO, MSG_HELLO_ACK, MSG_PING, MSG_PONG, PROTOCOL_VERSION};
+use crate::hello::PROTOCOL_VERSION;
+pub use crate::hello::{
+    MAGIC, MSG_BYE, MSG_DATA, MSG_HELLO, MSG_HELLO_ACK, MSG_PING, MSG_PONG,
+};
+use crate::hello::{Hello, HelloAck};
 
 /// 写出握手消息（HELLO 或 HELLO_ACK）。
 fn write_handshake(w: &mut impl Write, msg_type: u8, body: &[u8]) -> Result<()> {

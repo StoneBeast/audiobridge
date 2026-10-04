@@ -1,0 +1,92 @@
+{
+  "protocol_version": 1,
+  "note": "由 audiobridge-core 的 conformance 测试生成；Rust 与 Kotlin 双侧共用。重新生成：AB_GENERATE_VECTORS=1 cargo test -p audiobridge-core",
+  "cases": [
+    {
+      "name": "hello_basic",
+      "kind": "hello",
+      "bytes": "0700506978656c20380080bb000002140050000000000000000000000000000000000000000000000000000000000000000000",
+      "fields": {
+        "auth_token": null,
+        "buffer_target_ms": 80,
+        "channels": 2,
+        "codec": "pcm_s16le",
+        "device_name": "Pixel 8",
+        "frame_ms": 20,
+        "sample_rate": 48000
+      }
+    },
+    {
+      "name": "hello_with_token",
+      "kind": "hello",
+      "bytes": "0700506978656c20380080bb000002140050000123456700000000000000000000000000000000000000000000000000000000",
+      "fields": {
+        "auth_token": "0123456700000000000000000000000000000000000000000000000000000000",
+        "buffer_target_ms": 80,
+        "channels": 2,
+        "codec": "pcm_s16le",
+        "device_name": "Pixel 8",
+        "frame_ms": 20,
+        "sample_rate": 48000
+      }
+    },
+    {
+      "name": "hello_ack_ok",
+      "kind": "hello_ack",
+      "bytes": "000080bb0000020a004445534b544f502d50435000",
+      "fields": {
+        "channels": 2,
+        "codec": "pcm_s16le",
+        "device_name": "DESKTOP-PC",
+        "jitter_target_ms": 80,
+        "sample_rate": 48000,
+        "status": "ok"
+      }
+    },
+    {
+      "name": "hello_ack_busy",
+      "kind": "hello_ack",
+      "bytes": "010080bb0000020a004445534b544f502d50435000",
+      "fields": {
+        "status": "busy"
+      }
+    },
+    {
+      "name": "data_payload",
+      "kind": "data_payload",
+      "bytes": "0700000039300000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "fields": {
+        "audio_len": 32,
+        "seq": 7,
+        "timestamp_ms": 12345
+      }
+    },
+    {
+      "name": "message_data",
+      "kind": "message",
+      "bytes": "0328000700000039300000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "fields": {
+        "msg_type": 3,
+        "payload_len": 40
+      }
+    },
+    {
+      "name": "message_ping",
+      "kind": "message",
+      "bytes": "040400efbeadde",
+      "fields": {
+        "msg_type": 4,
+        "payload_len": 4
+      }
+    },
+    {
+      "name": "message_bye",
+      "kind": "message",
+      "bytes": "06040000627965",
+      "fields": {
+        "msg_type": 6,
+        "payload_len": 4
+      }
+    }
+  ]
+}
