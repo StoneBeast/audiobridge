@@ -174,6 +174,25 @@ fn build_cases() -> Vec<Case> {
         fields: serde_json::json!({ "msg_type": 6, "payload_len": 4 }),
     });
 
+    // —— UDP 设备发现（docs/protocol.md §6）——
+    cases.push(Case {
+        name: "discovery_probe".into(),
+        kind: "discovery_probe".into(),
+        bytes: hex(&audiobridge_core::discovery::probe_bytes()),
+        fields: serde_json::json!({ "version": 1 }),
+    });
+    let reply = audiobridge_core::discovery::reply_bytes(48_000, "Pixel 8");
+    cases.push(Case {
+        name: "discovery_reply".into(),
+        kind: "discovery_reply".into(),
+        bytes: hex(&reply),
+        fields: serde_json::json!({
+            "version": 1,
+            "tcp_port": 48_000,
+            "device_name": "Pixel 8",
+        }),
+    });
+
     cases
 }
 

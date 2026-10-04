@@ -9,6 +9,7 @@
 //!   位于仓库根目录 `protocol/conformance-vectors.json`（Rust 与 Kotlin 两侧共用）。
 
 pub mod codec;
+pub mod discovery;
 pub mod error;
 pub mod framing;
 pub mod hello;
@@ -18,6 +19,7 @@ pub mod queue;
 pub mod session;
 
 pub use codec::Codec;
+pub use discovery::{DiscoveredDevice, DISCOVERY_MAGIC_PROBE};
 pub use error::{AckStatus, Error, Result};
 pub use hello::{Hello, HelloAck, PROTOCOL_VERSION};
 pub use jitter::{JitterBuffer, JitterStats};

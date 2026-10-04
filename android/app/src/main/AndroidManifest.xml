@@ -28,7 +28,7 @@
         <service
             android:name=".capture.CaptureService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaProjection|mediaPlayback" />
 
         <service
             android:name=".play.PlaybackService"

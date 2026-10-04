@@ -93,6 +93,21 @@ class ProtocolConformanceTest {
                     assertArrayEquals("message encode mismatch", bytes, out.toByteArray())
                     matched++
                 }
+                "discovery_probe" -> {
+                    val parsed = Discovery.parseProbe(bytes, bytes.size)
+                    assertTrue("probe parse failed", parsed)
+                    // 编码方向：重新构造探测包应逐字节一致
+                    assertArrayEquals("probe encode mismatch", bytes, Discovery.probeBytes())
+                    matched++
+                }
+                "discovery_reply" -> {
+                    val (tcpPort, name) = Discovery.parseReply(bytes, bytes.size)!!
+                    assertEquals(fields.getInt("tcp_port"), tcpPort)
+                    assertEquals(fields.getString("device_name"), name)
+                    val reencoded = Discovery.replyBytes(tcpPort, name)
+                    assertArrayEquals("reply encode mismatch", bytes, reencoded)
+                    matched++
+                }
             }
         }
         assertTrue("匹配的向量过少: $matched", matched >= 6)

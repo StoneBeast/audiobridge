@@ -9,6 +9,7 @@ description.workspace = true
 thiserror = { workspace = true }
 log = { workspace = true }
 sha2 = "0.10"
+if-addrs = "0.13"
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -49,6 +49,8 @@ android {
         compose = true
     }
     testOptions {
+        // JVM 单元测试中 android.util.Log 等框架方法返回默认值而非抛异常
+        unitTests.isReturnDefaultValues = true
         // JVM 单元测试读取仓库根目录 protocol/ 下的一致性测试向量
         sourceSets["test"].resources.srcDir(rootDir.resolve("../protocol"))
     }

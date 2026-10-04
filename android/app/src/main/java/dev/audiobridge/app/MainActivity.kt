@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -70,7 +71,13 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     MainScreen(
-                        onStartSend = { requestProjection() },
+                        onStartSend = {
+                            if (Settings.testSource) {
+                                CaptureService.startTest(this)
+                            } else {
+                                requestProjection()
+                            }
+                        },
                         onStopSend = { CaptureService.stop(this) },
                         onStartReceive = { PlaybackService.start(this) },
                         onStopReceive = { PlaybackService.stop(this) },
@@ -127,6 +134,9 @@ private fun SenderPane(onStart: () -> Unit, onStop: () -> Unit) {
     val state by AppBus.sender.collectAsState()
     var host by remember { mutableStateOf(Settings.host) }
     var port by remember { mutableStateOf(Settings.port.toString()) }
+    var testSource by remember { mutableStateOf(Settings.testSource) }
+    var scanning by remember { mutableStateOf(false) }
+    var devices by remember { mutableStateOf(emptyList<dev.audiobridge.app.proto.Discovery.DiscoveredDevice>()) }
 
     Column(
         modifier = Modifier
@@ -137,6 +147,52 @@ private fun SenderPane(onStart: () -> Unit, onStop: () -> Unit) {
         Text("把本机的系统声音（电视剧、音乐等）实时发送到局域网内的电脑。", style = MaterialTheme.typography.bodyMedium)
 
         Spacer(Modifier.height(12.dp))
+        // —— 自动发现 ——
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = {
+                    val p = port.toIntOrNull() ?: 48000
+                    scanning = true
+                    Thread {
+                        val r = dev.audiobridge.app.proto.Discovery.scanBlocking(p, 2500)
+                        devices = r
+                        scanning = false
+                    }.start()
+                },
+                enabled = !scanning,
+            ) { Text(if (scanning) "扫描中…" else "扫描局域网设备") }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                if (devices.isEmpty()) "未发现设备（对方需先启动接收）" else "发现 ${devices.size} 台，点击「连接」",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        devices.forEach { d ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(d.name, style = MaterialTheme.typography.bodyMedium)
+                    Text("${d.addr}:${d.tcpPort}", style = MaterialTheme.typography.bodySmall)
+                }
+                Button(
+                    onClick = {
+                        host = d.addr
+                        port = d.tcpPort.toString()
+                        Settings.host = d.addr
+                        Settings.port = d.tcpPort
+                        onStart()
+                    },
+                    enabled = !state.running,
+                ) { Text("连接") }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text("手动指定地址（通常无需填写）", style = MaterialTheme.typography.labelMedium)
         OutlinedTextField(
             value = host,
             onValueChange = { host = it },
@@ -149,11 +205,22 @@ private fun SenderPane(onStart: () -> Unit, onStop: () -> Unit) {
         OutlinedTextField(
             value = port,
             onValueChange = { port = it.filter { c -> c.isDigit() } },
-            label = { Text("端口") },
+            label = { Text("端口（默认 48000，两端保持一致）") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = testSource,
+                onCheckedChange = {
+                    testSource = it
+                    Settings.testSource = it
+                },
+            )
+            Text("测试源模式（不发系统声音，发送内置测试音，用于链路自测）", style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Button(
                 onClick = {
@@ -180,12 +247,26 @@ private fun SenderPane(onStart: () -> Unit, onStop: () -> Unit) {
             extra = if (state.connected) "已发送 ${formatBytes(state.sentBytes)}（${state.sentSeconds} 秒）" else "",
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
+        var selfTest by remember { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = selfTest,
+                onCheckedChange = {
+                    selfTest = it
+                    if (it) dev.audiobridge.app.util.SelfTestTone.start()
+                    else dev.audiobridge.app.util.SelfTestTone.stop()
+                },
+            )
+            Text("播放测试音（自测链路）", style = MaterialTheme.typography.bodySmall)
+        }
+
+        Spacer(Modifier.height(12.dp))
         Text(
             "使用说明：\n" +
                 "1. 电脑端 AudioBridge 选择「接收」并启动监听；\n" +
-                "2. 局域网：填电脑 IP；USB：先用电脑端「USB(ADB)」按钮建立隧道，然后这里填 127.0.0.1；\n" +
-                "3. 点「开始发送」，在系统弹窗中允许录制音频。",
+                "2. 点「扫描局域网设备」，在列表中点「连接」；USB 场景请先用电脑端「USB(ADB)」按钮，再手动填 127.0.0.1；\n" +
+                "3. 正常模式首次发送需在系统弹窗中允许录制音频。",
             style = MaterialTheme.typography.bodySmall,
         )
     }

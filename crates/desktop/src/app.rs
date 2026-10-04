@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use audiobridge_audio::{LoopbackSource, SpeakerOutput};
+use audiobridge_core::discovery::{self, DiscoveredDevice};
 use audiobridge_core::session::{
     run_sender, spawn_receiver, AudioOutput, ReceiveOptions, ReceiverStats, SendOptions,
     SenderStats,
@@ -37,6 +38,8 @@ pub struct AudioBridgeApp {
     last_send: SenderStats,
     last_recv: ReceiverStats,
     volume_ui: f32,
+    scan_devices: Arc<Mutex<Vec<DiscoveredDevice>>>,
+    scanning: Arc<AtomicBool>,
     log: SharedLog,
     status: String,
 }
@@ -53,9 +56,41 @@ impl AudioBridgeApp {
             last_send: SenderStats::default(),
             last_recv: ReceiverStats::default(),
             volume_ui,
+            scan_devices: Arc::new(Mutex::new(Vec::new())),
+            scanning: Arc::new(AtomicBool::new(false)),
             log,
             status: String::new(),
         }
+    }
+
+    fn start_scan(&mut self) {
+        if self.scanning.load(Ordering::Relaxed) {
+            return;
+        }
+        self.scanning.store(true, Ordering::Relaxed);
+        if let Ok(mut g) = self.scan_devices.lock() {
+            g.clear();
+        }
+        let port = self.settings.send_port;
+        let devices = Arc::clone(&self.scan_devices);
+        let scanning = Arc::clone(&self.scanning);
+        std::thread::Builder::new()
+            .name("ab-scan".into())
+            .spawn(move || match discovery::scan(port, 2500) {
+                Ok(found) => {
+                    log::info!("扫描完成：发现 {} 台设备", found.len());
+                    if let Ok(mut g) = devices.lock() {
+                        *g = found;
+                    }
+                    scanning.store(false, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    log::warn!("扫描失败: {e}");
+                    scanning.store(false, Ordering::Relaxed);
+                }
+            })
+            .ok();
+        self.status = format!("正在扫描 udp/{port}（约 2.5 秒）…");
     }
 
     fn start_send(&mut self) {
@@ -132,6 +167,13 @@ impl AudioBridgeApp {
             });
         // 若播放设备初始化失败，接收线程会把错误写入 stats 并置位 stop
         let _ = spawn_receiver(opts, Arc::clone(&stats), Arc::clone(&stop), factory);
+        // 局域网自动发现：应答 UDP 探测（与 TCP 同端口）
+        discovery::spawn_responder(
+            self.settings.listen_port,
+            self.settings.listen_port,
+            self.settings.device_name.clone(),
+            Arc::clone(&stop),
+        );
         self.recv = Some(RecvSession {
             stop,
             stats,
@@ -151,25 +193,61 @@ impl AudioBridgeApp {
         let running = self.send.is_some();
         ui.add_space(4.0);
         ui.label("把本机的系统声音发送到另一台设备：");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.send_host)
-                .hint_text("对方 IP；USB 场景填 127.0.0.1")
-                .desired_width(260.0),
-        );
+
+        // —— 自动发现 ——
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label("端口");
-            ui.add(egui::DragValue::new(&mut self.settings.send_port).range(1..=65535));
-            ui.separator();
-            if ui.button("USB(ADB) 接入").clicked() {
-                self.settings.save();
-                match crate::adb::adb_reverse(self.settings.send_port) {
-                    Ok(msg) => {
-                        self.settings.send_host = "127.0.0.1".into();
-                        self.status = msg;
-                    }
-                    Err(e) => self.status = format!("USB 失败: {e}"),
-                }
+            let scanning = self.scanning.load(Ordering::Relaxed);
+            if ui
+                .add_enabled(!scanning, egui::Button::new(if scanning { "扫描中…" } else { "⟳ 扫描局域网设备" }))
+                .clicked()
+            {
+                self.start_scan();
             }
+            let n = self.scan_devices.lock().map(|g| g.len()).unwrap_or(0);
+            ui.label(format!("发现 {n} 台"));
+        });
+        let devices = self.scan_devices.lock().map(|g| g.clone()).unwrap_or_default();
+        for d in &devices {
+            ui.horizontal(|ui| {
+                ui.label(format!("{}（{}）", d.name, d.addr));
+                if ui
+                    .add_enabled(!running, egui::Button::new("连接"))
+                    .clicked()
+                {
+                    self.settings.send_host = d.addr.to_string();
+                    self.settings.send_port = d.tcp_port;
+                    self.settings.save();
+                    self.start_send();
+                }
+            });
+        }
+        if devices.is_empty() && !self.scanning.load(Ordering::Relaxed) {
+            ui.weak("未发现设备：请确认对方已选「接收端」并启动监听");
+        }
+
+        // —— 手动地址（高级）——
+        ui.collapsing("手动指定 IP / USB(ADB)（高级）", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.send_host)
+                    .hint_text("对方 IP；USB 场景填 127.0.0.1")
+                    .desired_width(260.0),
+            );
+            ui.horizontal(|ui| {
+                ui.label("端口");
+                ui.add(egui::DragValue::new(&mut self.settings.send_port).range(1..=65535));
+                ui.separator();
+                if ui.button("USB(ADB) 接入").clicked() {
+                    self.settings.save();
+                    match crate::adb::adb_reverse(self.settings.send_port) {
+                        Ok(msg) => {
+                            self.settings.send_host = "127.0.0.1".into();
+                            self.status = msg;
+                        }
+                        Err(e) => self.status = format!("USB 失败: {e}"),
+                    }
+                }
+            });
         });
         ui.collapsing("高级（访问令牌）", |ui| {
             ui.label("两端设置相同令牌才可连接，留空表示不校验：");
@@ -221,16 +299,16 @@ impl AudioBridgeApp {
     fn recv_pane(&mut self, ui: &mut egui::Ui) {
         let running = self.recv.is_some();
         ui.add_space(4.0);
-        ui.label("接收另一台设备发来的系统声音并播放：");
-        ui.horizontal(|ui| {
-            ui.label("监听端口");
-            ui.add(egui::DragValue::new(&mut self.settings.listen_port).range(1..=65535));
-            ui.separator();
-            ui.label("缓冲水位(ms)");
-            ui.add(egui::DragValue::new(&mut self.settings.target_ms).range(20..=300));
-        });
-        ui.collapsing("高级（访问令牌）", |ui| {
-            ui.label("两端设置相同令牌才可连接，留空表示不校验：");
+        ui.label("接收另一台设备发来的系统声音并播放（手机端点「扫描局域网设备」即可找到本机）：");
+        ui.collapsing("高级（端口 / 缓冲 / 令牌）", |ui| {
+            ui.horizontal(|ui| {
+                ui.label("监听端口");
+                ui.add(egui::DragValue::new(&mut self.settings.listen_port).range(1..=65535));
+                ui.separator();
+                ui.label("缓冲水位(ms)");
+                ui.add(egui::DragValue::new(&mut self.settings.target_ms).range(20..=300));
+            });
+            ui.label("访问令牌（两端一致才可连接，留空不校验）：");
             ui.add(
                 egui::TextEdit::singleline(&mut self.settings.token)
                     .desired_width(200.0)

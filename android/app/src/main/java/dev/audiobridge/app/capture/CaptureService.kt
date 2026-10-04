@@ -41,14 +41,22 @@ class CaptureService : Service() {
     companion object {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_DATA = "data"
+        const val ACTION_TEST = "dev.audiobridge.app.action.TEST_SEND"
         private const val NOTIFICATION_ID = 101
         private const val CHANNEL_ID = "audiobridge_capture"
         private const val TAG = "ab-capture"
 
+        /** 正常模式：携带 MediaProjection 授权结果启动。 */
         fun start(context: Context, resultCode: Int, data: Intent) {
             val intent = Intent(context, CaptureService::class.java)
                 .putExtra(EXTRA_RESULT_CODE, resultCode)
                 .putExtra(EXTRA_DATA, data)
+            context.startForegroundService(intent)
+        }
+
+        /** 测试源模式：跳过系统采集，发送内置测试音。 */
+        fun startTest(context: Context) {
+            val intent = Intent(context, CaptureService::class.java).setAction(ACTION_TEST)
             context.startForegroundService(intent)
         }
 
@@ -69,6 +77,19 @@ class CaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val isTest = intent?.action == ACTION_TEST
+        if (isTest) {
+            startAsForeground(testSource = true)
+            try {
+                startTestCapture()
+            } catch (e: Exception) {
+                Log.e(TAG, "start test capture failed", e)
+                AppBus.updateSender { it.copy(running = false, error = "启动失败: ${e.message}") }
+                stopCapture()
+                stopSelf()
+            }
+            return START_NOT_STICKY
+        }
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE) ?: Int.MIN_VALUE
         val data = intent?.let {
             IntentCompat.getParcelableExtra(it, EXTRA_DATA, Intent::class.java)
@@ -78,7 +99,7 @@ class CaptureService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startAsForeground()
+        startAsForeground(testSource = false)
         try {
             startCapture(resultCode, data)
         } catch (e: Exception) {
@@ -95,19 +116,25 @@ class CaptureService : Service() {
         super.onDestroy()
     }
 
-    private fun startAsForeground() {
+    private fun startAsForeground(testSource: Boolean) {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "AudioBridge 发送", NotificationManager.IMPORTANCE_LOW),
         )
+        val title = if (testSource) "AudioBridge 正在发送测试音（自测模式）" else "AudioBridge 正在发送系统声音"
         val notif: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_send_audio)
-            .setContentTitle("AudioBridge 正在发送系统声音")
+            .setContentTitle(title)
             .setContentText("点击通知栏可停止")
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= 30) {
-            startForeground(NOTIFICATION_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            val type = if (testSource) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            } else {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            }
+            startForeground(NOTIFICATION_ID, notif, type)
         } else {
             startForeground(NOTIFICATION_ID, notif)
         }
@@ -124,6 +151,51 @@ class CaptureService : Service() {
             bufferTargetMs = Protocol.DEFAULT_TARGET_MS,
             authTokenSha256 = sha256Token(token),
         )
+    }
+
+    /** 测试源模式：以内置测试音为音频源（不需要 MediaProjection）。 */
+    private fun startTestCapture() {
+        val host = Settings.host
+        val port = Settings.port
+        val s = StreamSender(host, port, hello())
+        s.connect()
+        sender = s
+
+        val chunkBytes = Protocol.s16BytesPerMs(Protocol.SAMPLE_RATE, 2) * Protocol.DEFAULT_FRAME_MS
+        val tone = dev.audiobridge.app.util.TestToneSource(Protocol.DEFAULT_FRAME_MS)
+        val buf = ByteArray(chunkBytes)
+        active = true
+        AppBus.updateSender {
+            it.copy(running = true, connected = true, peer = "$host:$port", error = null, sentBytes = 0, sentSeconds = 0)
+        }
+        Log.i(TAG, "test-source streaming -> $host:$port")
+        captureThread = thread(name = "ab-capture-test") {
+            var sent = 0L
+            val startedAt = System.currentTimeMillis()
+            try {
+                while (active) {
+                    val n = tone.read(buf)
+                    if (n > 0) {
+                        s.sendAudio(buf, 0, n)
+                        sent += n
+                        if (sent % (chunkBytes * 25L) == 0L) {
+                            val sec = (System.currentTimeMillis() - startedAt) / 1000
+                            AppBus.updateSender { it.copy(sentBytes = sent, sentSeconds = sec) }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                if (active) {
+                    Log.e(TAG, "send loop error", e)
+                    AppBus.updateSender { it.copy(error = "发送中断: ${e.message}", connected = false) }
+                }
+            } finally {
+                active = false
+                runCatching { s.close() }
+                AppBus.updateSender { it.copy(running = false, connected = false) }
+                mainHandler.post { stopSelf() }
+            }
+        }
     }
 
     private fun startCapture(resultCode: Int, data: Intent) {

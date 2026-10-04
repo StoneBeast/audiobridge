@@ -87,6 +87,24 @@
         "msg_type": 6,
         "payload_len": 4
       }
+    },
+    {
+      "name": "discovery_probe",
+      "kind": "discovery_probe",
+      "bytes": "4142525101",
+      "fields": {
+        "version": 1
+      }
+    },
+    {
+      "name": "discovery_reply",
+      "kind": "discovery_reply",
+      "bytes": "414252500180bb0700506978656c2038",
+      "fields": {
+        "device_name": "Pixel 8",
+        "tcp_port": 48000,
+        "version": 1
+      }
     }
   ]
 }

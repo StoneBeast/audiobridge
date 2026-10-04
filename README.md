@@ -10,10 +10,14 @@
 - **系统声音采集**（不是麦克风！）：
   - Windows：WASAPI loopback（无需虚拟声卡、无需管理员）
   - Android：MediaProjection + AudioPlaybackCapture（Android 10+，系统弹窗授权）
+- **自动发现**：接收端固定端口 48000，发送端一键 UDP 广播扫描局域网，
+  点「连接」即用，无需手填 IP（跨路由/AP 隔离网络或 USB 场景仍可手动指定）
 - **两个平台互为收发端**：Android→PC、PC→Android、Android→Android、PC→PC 均可
 - **传输**：TCP 直连（局域网）；USB 场景经 ADB `reverse` 隧道（同一协议）
 - **低延迟**：48kHz 立体声 S16LE + 抖动缓冲，端到端延迟典型 150~300ms（可调）
-- **可调音量**（接收端）、**访问令牌**（可选）、连接状态与丢包统计
+- **测试源模式**（Android）：不发系统声音、改发内置测试音，用于链路自测与
+  ROM 不支持音频回采的设备（如部分模拟器）
+- **可调音量**（接收端）、**访问令牌**（可选）、连接状态与丢包/欠载统计
 - **一致性测试向量**：Rust 与 Kotlin 双实现共享同一份字节级测试
   （[`protocol/conformance-vectors.json`](protocol/conformance-vectors.json)）
 

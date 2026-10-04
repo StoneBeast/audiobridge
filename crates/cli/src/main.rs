@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 
 use audiobridge_audio::{LoopbackSource, SpeakerOutput};
 use audiobridge_core::session::{
-    run_sender, spawn_receiver, AudioOutput, AudioSource, NullOutput, ReceiveOptions,
-    ReceiverStats, SendOptions, ToneSource,
+    run_sender, spawn_receiver, AudioOutput, AudioSource, ReceiveOptions, ReceiverStats,
+    SendOptions, ToneSource,
 };
 use audiobridge_core::Error;
 
@@ -31,6 +31,7 @@ fn run() -> i32 {
         Some("send") => cmd_send(&args[1..]),
         Some("listen") => cmd_listen(&args[1..]),
         Some("tone") => cmd_tone(&args[1..]),
+        Some("probe") => cmd_probe(&args[1..]),
         _ => {
             print_usage();
             2
@@ -44,7 +45,8 @@ fn print_usage() {
          USAGE:\n  \
          audiobridge-cli send   --host <IP> [--port N] [--tone] [--seconds S] [--token T] [--name NAME]\n  \
          audiobridge-cli listen [--port N] [--sink null|speaker] [--seconds S] [--target-ms N] [--token T] [--name NAME]\n  \
-         audiobridge-cli tone   [--freq HZ] [--seconds S]",
+         audiobridge-cli tone   [--freq HZ] [--seconds S]\n  \
+         audiobridge-cli probe  [--port N] [--seconds S]      # UDP 广播扫描局域网接收端",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -145,6 +147,44 @@ fn cmd_send(args: &[String]) -> i32 {
     }
 }
 
+/// null 输出：按实时节拍消费，同时统计 S16 采样 RMS（证明收到真实音频而非空包）。
+struct RmsSink {
+    chunk_ms: u64,
+    acc: Arc<Mutex<RmsAcc>>,
+}
+
+#[derive(Default)]
+struct RmsAcc {
+    sum_sq: f64,
+    samples: u64,
+}
+
+impl AudioOutput for RmsSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        let mut g = self.acc.lock().unwrap();
+        let mut i = 0;
+        while i + 1 < buf.len() {
+            let v = i16::from_le_bytes([buf[i], buf[i + 1]]);
+            g.sum_sq += (v as f64) * (v as f64);
+            g.samples += 1;
+            i += 2;
+        }
+        drop(g);
+        std::thread::sleep(std::time::Duration::from_millis(self.chunk_ms));
+        Ok(())
+    }
+}
+
+impl RmsAcc {
+    fn rms(&self) -> f64 {
+        if self.samples == 0 {
+            0.0
+        } else {
+            (self.sum_sq / self.samples as f64).sqrt() / 32768.0
+        }
+    }
+}
+
 fn cmd_listen(args: &[String]) -> i32 {
     let m = parse_flags(args);
     let port: u16 = parse_u(&m, "port", 48_000);
@@ -158,9 +198,16 @@ fn cmd_listen(args: &[String]) -> i32 {
 
     let stats = Arc::new(Mutex::new(ReceiverStats::default()));
     let stop = Arc::new(AtomicBool::new(false));
+    let rms_acc = Arc::new(Mutex::new(RmsAcc::default()));
     let factory: Box<dyn FnOnce() -> Result<Box<dyn AudioOutput>, Error> + Send> =
         if sink == "null" {
-            Box::new(move || Ok(Box::new(NullOutput::new(frame_ms)) as Box<dyn AudioOutput>))
+            let acc = Arc::clone(&rms_acc);
+            Box::new(move || {
+                Ok(Box::new(RmsSink {
+                    chunk_ms: frame_ms as u64,
+                    acc,
+                }) as Box<dyn AudioOutput>)
+            })
         } else {
             Box::new(move || {
                 SpeakerOutput::new()
@@ -172,7 +219,7 @@ fn cmd_listen(args: &[String]) -> i32 {
     let _ = spawn_receiver(
         ReceiveOptions {
             port,
-            device_name: name,
+            device_name: name.clone(),
             frame_ms,
             target_ms,
             max_ms: 250,
@@ -183,6 +230,8 @@ fn cmd_listen(args: &[String]) -> i32 {
         Arc::clone(&stop),
         factory,
     );
+    // 局域网自动发现应答（UDP 与 TCP 同端口）
+    audiobridge_core::discovery::spawn_responder(port, port, name, Arc::clone(&stop));
     println!("LISTEN port={port} sink={sink}");
 
     let deadline = Instant::now() + Duration::from_secs(seconds.max(1));
@@ -202,15 +251,48 @@ fn cmd_listen(args: &[String]) -> i32 {
     stop.store(true, Ordering::Relaxed);
     std::thread::sleep(Duration::from_millis(300));
     let s = stats.lock().unwrap().clone();
+    let rms = rms_acc.lock().unwrap().rms();
     println!(
-        "RECEIVED bytes={} underruns={} dropped_bytes={}",
-        s.pushed_bytes, s.underruns, s.dropped_bytes
+        "RECEIVED bytes={} underruns={} dropped_bytes={} rms={:.4}",
+        s.pushed_bytes,
+        s.underruns,
+        s.dropped_bytes,
+        rms
     );
+    if sink == "null" {
+        println!("NOTE rms>0.001 means real audio signal received (not silence)");
+    }
     if let Some(err) = &s.error {
         eprintln!("error: {err}");
         return 1;
     }
     0
+}
+
+fn cmd_probe(args: &[String]) -> i32 {
+    let m = parse_flags(args);
+    let port: u16 = parse_u(&m, "port", 48_000);
+    let seconds: u64 = parse_u(&m, "seconds", 3);
+    println!("PROBE port={port} seconds={seconds}");
+    match audiobridge_core::discovery::scan(port, seconds * 1000) {
+        Ok(devices) => {
+            if devices.is_empty() {
+                println!("FOUND none");
+                return 0;
+            }
+            for d in &devices {
+                println!(
+                    "FOUND name={} addr={} port={}",
+                    d.name, d.addr, d.tcp_port
+                );
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            1
+        }
+    }
 }
 
 fn cmd_tone(args: &[String]) -> i32 {

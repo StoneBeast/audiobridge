@@ -70,6 +70,8 @@ class PlaybackService : Service() {
     @Volatile
     private var clientActive = false
 
+    private val discoveryStop = java.util.concurrent.atomic.AtomicBoolean(false)
+
     @Volatile
     var volume: Float = 1.0f
 
@@ -97,6 +99,11 @@ class PlaybackService : Service() {
         val port = Settings.listenPort
         startPlayerThread()
         startListenThread(port)
+        // 局域网自动发现：应答 UDP 探测（与 TCP 监听同端口）
+        discoveryStop.set(false)
+        dev.audiobridge.app.proto.Discovery.spawnResponder(
+            port, port, deviceName(), discoveryStop,
+        )
         AppBus.updateReceiver { it.copy(running = true, error = null, peer = "", clientConnected = false) }
         return START_STICKY
     }
@@ -104,6 +111,7 @@ class PlaybackService : Service() {
     override fun onDestroy() {
         active = false
         instance = null
+        discoveryStop.set(true)
         runCatching { server?.close() }
         runCatching { track?.stop() }
         runCatching { track?.release() }

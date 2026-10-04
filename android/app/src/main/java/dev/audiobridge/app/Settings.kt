@@ -11,6 +11,7 @@ object Settings {
     private const val KEY_LISTEN_PORT = "listen_port"
     private const val KEY_JITTER_MS = "jitter_ms"
     private const val KEY_TOKEN = "token"
+    private const val KEY_TEST_SOURCE = "test_source"
 
     private var prefs: SharedPreferences? = null
 
@@ -47,6 +48,14 @@ object Settings {
     var token: String
         get() = p().getString(KEY_TOKEN, "") ?: ""
         set(v) = p().edit().putString(KEY_TOKEN, v).apply()
+
+    /**
+     * 测试源模式：不采集系统声音，改发内置测试音。
+     * 用于 ROM 不支持音频回采的设备（部分模拟器）与网络链路自测。
+     */
+    var testSource: Boolean
+        get() = p().getBoolean(KEY_TEST_SOURCE, false)
+        set(v) = p().edit().putBoolean(KEY_TEST_SOURCE, v).apply()
 
     object ProtocolDefaults {
         const val TARGET_MS = 80
