@@ -1,0 +1,20 @@
+[package]
+name = "audiobridge-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AudioBridge 桌面端（Windows）：接收/发送系统音频"
+
+[[bin]]
+name = "audiobridge"
+path = "src/main.rs"
+
+[dependencies]
+audiobridge-core = { workspace = true }
+audiobridge-audio = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+eframe = "0.36"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "7"

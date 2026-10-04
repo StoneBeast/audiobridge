@@ -1,0 +1,18 @@
+[package]
+name = "audiobridge-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AudioBridge 命令行工具：无界面的发送/接收，用于测试与自动化"
+
+[[bin]]
+name = "audiobridge-cli"
+path = "src/main.rs"
+
+[dependencies]
+audiobridge-core = { workspace = true }
+audiobridge-audio = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+env_logger = "0.11"

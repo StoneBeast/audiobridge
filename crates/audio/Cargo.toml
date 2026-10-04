@@ -1,0 +1,11 @@
+[package]
+name = "audiobridge-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AudioBridge 的 Windows WASAPI 音频采集（loopback）与播放实现"
+
+[dependencies]
+audiobridge-core = { workspace = true }
+log = { workspace = true }
+wasapi = "0.25"

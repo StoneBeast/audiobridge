@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/audio", "crates/desktop", "crates/cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "AudioBridge - 把一台设备的系统声音通过局域网/USB 实时分享给另一台设备"
+
+[workspace.dependencies]
+audiobridge-core = { path = "crates/core" }
+audiobridge-audio = { path = "crates/audio" }
+log = "0.4"
+anyhow = "1"
+thiserror = "1"
+
+[profile.release]
+opt-level = 2
+lto = "thin"

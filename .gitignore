@@ -1,0 +1,26 @@
+# Rust
+/target
+**/target
+*.rs.bk
+
+# 发行目录
+/dist
+
+# Android / Gradle
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/.idea/
+/android/captures/
+/android/keystore/*.jks
+*.apk
+!android/app/src/main/assets/**
+
+# 签名密钥
+*.keystore
+*.jks
+
+# 系统杂项
+Thumbs.db
+.DS_Store
