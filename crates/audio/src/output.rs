@@ -79,7 +79,10 @@ impl AudioOutput for SpeakerOutput {
             return Ok(());
         }
         loop {
-            let space = self.audio_client.get_available_space_in_frames()? as usize;
+            let space = self
+                .audio_client
+                .get_available_space_in_frames()
+                .map_err(|e| io::Error::other(e))? as usize;
             if space >= frames {
                 return self
                     .render_client

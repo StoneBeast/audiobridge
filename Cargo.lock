@@ -515,6 +515,7 @@ dependencies = [
  "audiobridge-core",
  "dirs",
  "eframe",
+ "egui",
  "log",
  "serde",
  "serde_json",

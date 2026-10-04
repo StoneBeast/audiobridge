@@ -79,7 +79,7 @@ impl AudioBridgeApp {
             .spawn(move || {
                 match LoopbackSource::new(20) {
                     Ok(mut src) => {
-                        if let Err(e) = run_sender(&opts, &mut src, stats2, stop2) {
+                        if let Err(e) = run_sender(&opts, &mut src, Arc::clone(&stats2), Arc::clone(&stop2)) {
                             log::warn!("sender exited: {e}");
                             upd(&stats2, |s| s.error = Some(format!("{e}")));
                         }

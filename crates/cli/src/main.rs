@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 
 use audiobridge_audio::{LoopbackSource, SpeakerOutput};
 use audiobridge_core::session::{
-    run_sender, spawn_receiver, AudioOutput, NullOutput, ReceiveOptions, ReceiverStats,
-    SendOptions, ToneSource,
+    run_sender, spawn_receiver, AudioOutput, AudioSource, NullOutput, ReceiveOptions,
+    ReceiverStats, SendOptions, ToneSource,
 };
 use audiobridge_core::Error;
 
@@ -165,7 +165,7 @@ fn cmd_listen(args: &[String]) -> i32 {
             Box::new(move || {
                 SpeakerOutput::new()
                     .map(|o| Box::new(o) as Box<dyn AudioOutput>)
-                    .map_err(Error::Io)
+                    .map_err(|e| Error::Io(std::io::Error::other(e)))
             })
         };
 
