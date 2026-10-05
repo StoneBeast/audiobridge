@@ -78,33 +78,28 @@ class CaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val isTest = intent?.action == ACTION_TEST
-        if (isTest) {
-            startAsForeground(testSource = true)
-            try {
-                startTestCapture()
-            } catch (e: Exception) {
-                Log.e(TAG, "start test capture failed", e)
-                AppBus.updateSender { it.copy(running = false, error = "启动失败: ${e.message}") }
-                stopCapture()
-                stopSelf()
-            }
-            return START_NOT_STICKY
-        }
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE) ?: Int.MIN_VALUE
         val data = intent?.let {
             IntentCompat.getParcelableExtra(it, EXTRA_DATA, Intent::class.java)
         }
-        if (resultCode == Int.MIN_VALUE || data == null) {
-            AppBus.updateSender { it.copy(running = false, error = "缺少采集授权参数") }
+        if (!isTest && (resultCode == Int.MIN_VALUE || data == null)) {
+            AppBus.updateSender { it.copy(running = false, error = "缺少采集授权参数，请回到 App 重新点「开始发送」") }
             stopSelf()
             return START_NOT_STICKY
         }
-        startAsForeground(testSource = false)
         try {
-            startCapture(resultCode, data)
-        } catch (e: Exception) {
+            // 注意：startForeground 也可能失败（如 Android 14+ 的前台服务类型校验），纳入 try
+            startAsForeground(testSource = isTest)
+            if (isTest) {
+                startTestCapture()
+            } else {
+                startCapture(resultCode, data!!)
+            }
+        } catch (e: Throwable) {
             Log.e(TAG, "start capture failed", e)
-            AppBus.updateSender { it.copy(running = false, error = "启动失败: ${e.message}") }
+            // Android 部分异常（如 connect 超时）没有 message，显示类名兜底避免出现裸 null
+            val detail = e.message?.takeIf { it.isNotBlank() } ?: "(系统未返回原因: ${e.javaClass.simpleName})"
+            AppBus.updateSender { it.copy(running = false, connected = false, error = "启动失败: $detail") }
             stopCapture()
             stopSelf()
         }

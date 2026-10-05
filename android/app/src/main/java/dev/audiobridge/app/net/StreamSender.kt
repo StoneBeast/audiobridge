@@ -29,16 +29,44 @@ class StreamSender(
     var ack: HelloAck? = null
         private set
 
-    /** 连接并完成握手；失败抛异常。 */
+    /** 连接并完成握手；失败抛带可读原因的 IOException。 */
     fun connect() {
         val s = Socket()
         s.tcpNoDelay = true
-        s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+        try {
+            s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+        } catch (e: Exception) {
+            runCatching { s.close() }
+            // Android 的 connect 超时异常没有 message（显示为 null），这里翻译成可操作提示
+            val hint = when (e) {
+                is java.net.SocketTimeoutException ->
+                    "连接超时（${CONNECT_TIMEOUT_MS / 1000} 秒无响应）——请检查：" +
+                        "① 电脑端是否已点「开始接收」；② Windows 防火墙是否放行 AudioBridge " +
+                        "（首次监听时的弹窗要点「允许」，若错过请到防火墙设置里放行 48000 端口）；" +
+                        "③ 两台设备是否在同一网络（或改用 USB 隧道）"
+                is java.net.ConnectException ->
+                    "连接被拒绝——电脑端 AudioBridge 是否已启动接收？防火墙是否拦截？"
+                is java.net.UnknownHostException ->
+                    "地址无法解析——请检查 IP 是否填写正确"
+                else -> "${e.javaClass.simpleName}: ${e.message ?: "(无详细信息)"}"
+            }
+            throw java.io.IOException("无法连接 $host:$port —— $hint", e)
+        }
         s.soTimeout = CONNECT_TIMEOUT_MS // 仅握手读有超时
         socket = s
         out = s.getOutputStream()
         input = s.getInputStream()
-        ack = handshake(out, input, hello)
+        ack = try {
+            handshake(out, input, hello)
+        } catch (e: Exception) {
+            runCatching { s.close() }
+            socket = null
+            throw java.io.IOException(
+                "已连上 $host:$port 但握手失败——${e.javaClass.simpleName}: ${e.message ?: "(无详细信息)"}" +
+                    "（对端可能不是 AudioBridge 接收端，或访问令牌不一致）",
+                e,
+            )
+        }
         s.soTimeout = 0 // 数据阶段不再读对端，取消读超时
         Log.i(TAG, "handshake ok: $ack")
     }

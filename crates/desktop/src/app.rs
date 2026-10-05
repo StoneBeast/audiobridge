@@ -361,6 +361,9 @@ impl AudioBridgeApp {
                 s.underruns,
                 s.dropped_bytes
             ));
+            if s.client.is_none() && s.error.is_none() {
+                ui.weak("提示：手机连不上时——①首次监听的 Windows 防火墙弹窗要点「允许」（错过请到防火墙放行本程序或 48000 端口）；②手机端重新扫描或核对 IP；③USB 场景先点发送端「USB(ADB) 接入」");
+            }
         }
     }
 
