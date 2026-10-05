@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -12,11 +11,24 @@ use audiobridge_core::session::{
 
 use crate::logbuf::SharedLog;
 use crate::settings::Settings;
+use crate::updater;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Receive,
     Send,
+}
+
+/// 应用内更新的共享状态（后台线程写、UI 线程读）。
+#[derive(Default)]
+struct UpdateShared {
+    info: Option<updater::UpdateManifest>,
+    status: String,
+    downloading: bool,
+    got: u64,
+    total: u64,
+    error: Option<String>,
+    dismissed: bool,
 }
 
 struct SendSession {
@@ -40,6 +52,7 @@ pub struct AudioBridgeApp {
     volume_ui: f32,
     scan_devices: Arc<Mutex<Vec<DiscoveredDevice>>>,
     scanning: Arc<AtomicBool>,
+    update: Arc<Mutex<UpdateShared>>,
     log: SharedLog,
     status: String,
 }
@@ -48,7 +61,8 @@ impl AudioBridgeApp {
     pub fn new(log: SharedLog) -> Self {
         let settings = Settings::load();
         let volume_ui = settings.volume_permille as f32 / 10.0;
-        Self {
+        let update: Arc<Mutex<UpdateShared>> = Arc::new(Mutex::new(UpdateShared::default()));
+        let app = Self {
             settings,
             role: Role::Receive,
             send: None,
@@ -58,9 +72,148 @@ impl AudioBridgeApp {
             volume_ui,
             scan_devices: Arc::new(Mutex::new(Vec::new())),
             scanning: Arc::new(AtomicBool::new(false)),
+            update,
             log,
             status: String::new(),
-        }
+        };
+        app.spawn_update_check();
+        app
+    }
+
+    fn spawn_update_check(&self) {
+        let upd = Arc::clone(&self.update);
+        upd.lock().unwrap().status = "检查更新中…".into();
+        std::thread::Builder::new()
+            .name("ab-update-check".into())
+            .spawn(move || match updater::check() {
+                Ok(Some(m)) => {
+                    let mut g = upd.lock().unwrap();
+                    g.info = Some(m);
+                    g.status.clear();
+                }
+                Ok(None) => {
+                    let mut g = upd.lock().unwrap();
+                    g.status = format!("已是最新版本 v{}", updater::current_version());
+                }
+                Err(e) => {
+                    let mut g = upd.lock().unwrap();
+                    g.status = format!("检查更新失败: {e}");
+                }
+            })
+            .ok();
+    }
+
+    fn start_update_download(&mut self) {
+        let url = {
+            let g = self.update.lock().unwrap();
+            match &g.info {
+                Some(i) => i.windows_url.clone(),
+                None => return,
+            }
+        };
+        self.update.lock().unwrap().downloading = true;
+        let upd = Arc::clone(&self.update);
+        std::thread::Builder::new()
+            .name("ab-update-dl".into())
+            .spawn(move || {
+                let dest = match std::env::current_exe() {
+                    Ok(p) => p.with_file_name("audiobridge.exe.new"),
+                    Err(e) => {
+                        let mut g = upd.lock().unwrap();
+                        g.downloading = false;
+                        g.error = Some(format!("{e}"));
+                        return;
+                    }
+                };
+                let r = updater::download(&url, &dest, &|got, total| {
+                    let mut g = upd.lock().unwrap();
+                    g.got = got;
+                    g.total = total;
+                });
+                match r {
+                    Ok(()) => match updater::apply_and_restart(&dest) {
+                        Ok(()) => {
+                            log::info!("更新完成，重启新版本");
+                            let _ = dest;
+                            std::process::exit(0);
+                        }
+                        Err(e) => {
+                            let mut g = upd.lock().unwrap();
+                            g.downloading = false;
+                            g.error = Some(format!("替换程序失败: {e}（可到 Releases 页手动下载）"));
+                        }
+                    },
+                    Err(e) => {
+                        let mut g = upd.lock().unwrap();
+                        g.downloading = false;
+                        g.error = Some(format!("{e}"));
+                    }
+                }
+            })
+            .ok();
+    }
+
+    fn update_banner(&mut self, ui: &mut egui::Ui) {
+        let snapshot = {
+            let g = self.update.lock().unwrap();
+            if g.dismissed {
+                return;
+            }
+            let info = g.info.as_ref().map(|i| (i.version.clone(), i.notes.clone()));
+            (
+                info,
+                g.downloading,
+                g.got,
+                g.total,
+                g.error.clone(),
+                g.status.clone(),
+            )
+        };
+        let (info, downloading, got, total, error, _status) = snapshot;
+        let Some((version, notes)) = info else {
+            return;
+        };
+
+        egui::Frame::default()
+            .fill(egui::Color32::from_rgb(0xFF, 0xF3, 0xD6))
+            .inner_margin(6.0)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "发现新版本 v{version}（当前 v{}）",
+                            updater::current_version()
+                        ))
+                        .strong(),
+                    );
+                    if downloading {
+                        let frac = if total > 0 { got as f32 / total as f32 } else { 0.0 };
+                        ui.add(
+                            egui::ProgressBar::new(frac)
+                                .show_percentage()
+                                .desired_width(150.0),
+                        );
+                    } else if error.is_none() && ui.button("下载并自动重启").clicked() {
+                        self.start_update_download();
+                    }
+                    if ui.small_button("忽略").clicked() {
+                        self.update.lock().unwrap().dismissed = true;
+                    }
+                });
+                if !notes.is_empty() {
+                    ui.label(egui::RichText::new(&notes).small());
+                }
+                if let Some(err) = &error {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!("更新失败: {err}"))
+                            .color(egui::Color32::from_rgb(0xB3, 0x26, 0x1E)));
+                        if ui.small_button("打开下载页").clicked() {
+                            updater::open_releases_page();
+                        }
+                    });
+                }
+            });
+        ui.add_space(4.0);
     }
 
     fn start_scan(&mut self) {
@@ -402,6 +555,9 @@ impl eframe::App for AudioBridgeApp {
             ui.horizontal(|ui| {
                 ui.heading("AudioBridge 音频桥");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("检查更新").clicked() {
+                        self.spawn_update_check();
+                    }
                     if ui.small_button("清空日志").clicked() {
                         if let Ok(mut g) = self.log.lock() {
                             g.clear();
@@ -409,6 +565,7 @@ impl eframe::App for AudioBridgeApp {
                     }
                 });
             });
+            self.update_banner(ui);
             ui.separator();
             ui.add_space(6.0);
             ui.horizontal(|ui| {

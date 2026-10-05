@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -118,6 +119,7 @@ fun MainScreen(
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(16.dp),
         )
+        UpdateBanner()
         TabRow(selectedTabIndex = tab) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("发送到电脑") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("接收电脑声音") })
@@ -125,6 +127,83 @@ fun MainScreen(
         when (tab) {
             0 -> SenderPane(onStartSend, onStopSend)
             1 -> ReceiverPane(onStartReceive, onStopReceive)
+        }
+    }
+}
+
+@Composable
+private fun UpdateBanner() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var info by remember {
+        mutableStateOf<dev.audiobridge.app.util.AppUpdater.Info?>(null)
+    }
+    var status by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var dismissed by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf(0f) }
+
+    LaunchedEffect(Unit) {
+        Thread {
+            val r = runCatching { dev.audiobridge.app.util.AppUpdater.check(context) }.getOrNull()
+            if (r != null) info = r
+        }.start()
+    }
+
+    val cur = info ?: return
+    if (dismissed) return
+
+    Surface(color = Color(0xFFFFF3D6), modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                "发现新版本 v${cur.version}（当前 v${
+                    dev.audiobridge.app.util.AppUpdater.currentVersion(context)
+                }）",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (cur.notes.isNotBlank()) {
+                Text(cur.notes, style = MaterialTheme.typography.bodySmall)
+            }
+            if (busy) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp),
+                )
+                Text(status, style = MaterialTheme.typography.bodySmall)
+            } else {
+                Row {
+                    Button(
+                        onClick = {
+                            val target = cur
+                            busy = true
+                            status = "开始下载…"
+                            Thread {
+                                try {
+                                    val f = dev.audiobridge.app.util.AppUpdater.download(
+                                        context, target.androidUrl,
+                                    ) { got, total ->
+                                        if (total > 0) {
+                                            progress = got.toFloat() / total
+                                            status = "下载中 %.1f / %.1f MB".format(
+                                                got / 1048576.0, total / 1048576.0,
+                                            )
+                                        }
+                                    }
+                                    status = "下载完成，调起系统安装…"
+                                    dev.audiobridge.app.util.AppUpdater.installApk(context, f)
+                                    busy = false
+                                } catch (e: Exception) {
+                                    status = "更新失败: ${e.message}"
+                                    busy = false
+                                }
+                            }.start()
+                        },
+                    ) { Text("下载并安装") }
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedButton(onClick = { dismissed = true }) { Text("忽略") }
+                }
+            }
         }
     }
 }

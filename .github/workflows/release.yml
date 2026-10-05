@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Windows 构建
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build
+        run: cargo build --release --workspace
+      - name: 打包
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/audiobridge.exe dist/
+          Copy-Item target/release/audiobridge-cli.exe dist/
+          Compress-Archive -Path dist/* -DestinationPath audiobridge-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: audiobridge-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: target/release/audiobridge.exe
+
+  build-android:
+    name: Android 构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v3
+      - name: assembleRelease
+        run: ./gradlew :app:assembleRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+  publish:
+    name: 发布 Release
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: 整理产物
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir release
+          cp artifacts/windows-zip/audiobridge-windows-x64.zip release/
+          cp artifacts/windows-exe/audiobridge.exe release/
+          cp artifacts/android-apk/app-release.apk "release/AudioBridge-v${VERSION}.apk"
+          ls -la release/
+      - name: 生成 update.json（应用内更新清单）
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          REPO="${{ github.repository }}"
+          cat > release/update.json <<EOF
+          {
+            "version": "${VERSION}",
+            "notes": "AudioBridge ${GITHUB_REF_NAME}",
+            "windows_url": "https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}/audiobridge.exe",
+            "android_url": "https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}/AudioBridge-v${VERSION}.apk"
+          }
+          EOF
+          cat release/update.json
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            release/*

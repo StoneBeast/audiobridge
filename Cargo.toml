@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/core", "crates/audio", "crates/desktop", "crates/cli"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 description = "AudioBridge - 把一台设备的系统声音通过局域网/USB 实时分享给另一台设备"

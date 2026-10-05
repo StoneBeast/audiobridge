@@ -17,7 +17,6 @@ fn sender_to_receiver_over_localhost() {
     let stop = Arc::new(AtomicBool::new(false));
 
     // 接收端
-    let rx_stop = Arc::clone(&stop);
     let rx_stats2 = Arc::clone(&rx_stats);
     let handles = spawn_receiver(
         ReceiveOptions {

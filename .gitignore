@@ -17,9 +17,11 @@
 *.apk
 !android/app/src/main/assets/**
 
-# 签名密钥
+# 签名密钥：release.jks 特意提交（个人项目，保证 CI 与本地签名一致、
+# 应用内更新可覆盖安装；公开发布请替换为自己的密钥并改用 GitHub Secrets）
 *.keystore
-*.jks
+android/keystore/*
+!android/keystore/release.jks
 
 # 系统杂项
 Thumbs.db

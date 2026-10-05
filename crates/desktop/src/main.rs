@@ -6,6 +6,7 @@ mod adb;
 mod app;
 mod logbuf;
 mod settings;
+mod updater;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
