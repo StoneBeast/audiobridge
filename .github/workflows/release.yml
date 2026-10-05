@@ -23,15 +23,18 @@ jobs:
           New-Item -ItemType Directory dist | Out-Null
           Copy-Item target/release/audiobridge.exe dist/
           Copy-Item target/release/audiobridge-cli.exe dist/
-          Compress-Archive -Path dist/* -DestinationPath audiobridge-windows-x64.zip
+          Compress-Archive -Path dist/* -DestinationPath audiobridge-windows-x86_64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: windows-zip
-          path: audiobridge-windows-x64.zip
+          path: audiobridge-windows-x86_64.zip
+      - name: 重命名裸 exe（标明系统与架构，供应用内更新）
+        shell: pwsh
+        run: Copy-Item target/release/audiobridge.exe audiobridge-windows-x86_64.exe
       - uses: actions/upload-artifact@v4
         with:
           name: windows-exe
-          path: target/release/audiobridge.exe
+          path: audiobridge-windows-x86_64.exe
 
   build-android:
     name: Android 构建
@@ -64,9 +67,9 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir release
-          cp artifacts/windows-zip/audiobridge-windows-x64.zip release/
-          cp artifacts/windows-exe/audiobridge.exe release/
-          cp artifacts/android-apk/app-release.apk "release/AudioBridge-v${VERSION}.apk"
+          cp artifacts/windows-zip/audiobridge-windows-x86_64.zip release/
+          cp artifacts/windows-exe/audiobridge-windows-x86_64.exe release/
+          cp artifacts/android-apk/app-release.apk "release/AudioBridge-v${VERSION}-universal.apk"
           ls -la release/
       - name: 生成 update.json（应用内更新清单）
         run: |
@@ -76,8 +79,8 @@ jobs:
           {
             "version": "${VERSION}",
             "notes": "AudioBridge ${GITHUB_REF_NAME}",
-            "windows_url": "https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}/audiobridge.exe",
-            "android_url": "https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}/AudioBridge-v${VERSION}.apk"
+            "windows_url": "https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}/audiobridge-windows-x86_64.exe",
+            "android_url": "https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}/AudioBridge-v${VERSION}-universal.apk"
           }
           EOF
           cat release/update.json

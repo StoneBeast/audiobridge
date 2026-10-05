@@ -39,8 +39,8 @@ Windows（Rust）与 Android（Kotlin）双端，共享同一套 Rust 协议核�
 
 | 文件 | 说明 |
 | --- | --- |
-| `audiobridge-windows-x64.zip` | Windows 桌面应用 + CLI（解压即用） |
-| `AudioBridge-v*.apk` | Android 应用（Android 10+） |
+| `audiobridge-windows-x86_64.zip` | Windows 桌面应用 + CLI（64 位，解压即用） |
+| `AudioBridge-v*-universal.apk` | Android 应用（通用包，含全部 ABI，Android 10+） |
 
 安装后两端会自动检查新版本（每次启动时）；发现更新后用户可选择**后台下载**
 （期间正常使用，完成后提示安装）或忽略该版本；顶部「检查更新」按钮可随时
