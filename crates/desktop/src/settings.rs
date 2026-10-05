@@ -28,7 +28,7 @@ impl Default for Settings {
             send_host: "192.168.1.100".into(),
             send_port: 48_000,
             listen_port: 48_000,
-            target_ms: 80,
+            target_ms: audiobridge_core::codec::DEFAULT_TARGET_MS,
             token: String::new(),
             volume_permille: 1000,
             device_name: "Windows PC".into(),

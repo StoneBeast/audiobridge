@@ -21,7 +21,8 @@ class JitterBuffer(
     private val bytesPerMs: Int =
         Protocol.s16BytesPerMs(maxOf(1, sampleRate), maxOf(1, channels)).coerceAtLeast(1)
     val chunkBytes: Int = bytesPerMs * maxOf(1, frameMs)
-    private val targetBytes: Int = bytesPerMs * maxOf(0, targetMs)
+    private var targetBytes: Int = bytesPerMs * maxOf(0, targetMs)
+    private val initialTargetBytes: Int = targetBytes
     private val capacityBytes: Int =
         maxOf(bytesPerMs * maxOf(1, maxMs), chunkBytes)
     private var started = false
@@ -33,12 +34,14 @@ class JitterBuffer(
     private var poppedBytesTotal = 0L
     private var droppedBytesTotal = 0L
     private var underrunsTotal = 0L
+    private var calibratedSkipsTotal = 0L
 
     data class Stats(
         val pushedBytes: Long,
         val poppedBytes: Long,
         val droppedBytes: Long,
         val underruns: Long,
+        val calibratedSkips: Long = 0,
     )
 
     /** 写入音频字节（网络线程调用）。 */
@@ -102,14 +105,61 @@ class JitterBuffer(
     fun isStarted(): Boolean = started
 
     @Synchronized
-    fun stats(): Stats = Stats(pushedBytesTotal, poppedBytesTotal, droppedBytesTotal, underrunsTotal)
+    fun stats(): Stats = Stats(
+        pushedBytesTotal, poppedBytesTotal, droppedBytesTotal,
+        underrunsTotal, calibratedSkipsTotal,
+    )
 
-    /** 清空缓冲（新会话开始时），统计保留。 */
+    /** 清空缓冲（新会话开始时），统计保留。目标水位恢复为初始设定。 */
     @Synchronized
     fun reset() {
         queue.clear()
         started = false
         starving = false
+        targetBytes = initialTargetBytes
+    }
+
+    /** 当前目标水位字节数。 */
+    @get:Synchronized
+    val targetBytesValue: Int
+        get() = targetBytes
+
+    /**
+     * 水位校准：把缓冲拉回目标附近，补偿两侧时钟漂移（与 Rust 实现一致）。
+     * 播放线程每次 pop 后调用：
+     * - 缓冲 > 目标+2 帧：从最旧端跳过多余（单次最多 2 帧）；
+     * - 缓冲 ≤ 目标-1 帧且非空：补 1 帧静音；
+     * - 完全空（欠载中）不注入。
+     * 返回跳过的字节数。
+     */
+    @Synchronized
+    fun calibrate(): Int {
+        if (!started) return 0
+        val buffered = bufferedBytesInternal()
+        if (buffered == 0) return 0
+        val high = targetBytes + 2 * chunkBytes
+        return if (buffered > high) {
+            var drop = (buffered - targetBytes).coerceAtMost(2 * chunkBytes)
+            var left = drop
+            while (left > 0) {
+                val front = queue.firstOrNull() ?: break
+                if (front.size <= left) {
+                    left -= front.size
+                    queue.removeFirst()
+                } else {
+                    queue[0] = front.copyOfRange(left, front.size)
+                    left = 0
+                }
+            }
+            calibratedSkipsTotal += drop.toLong()
+            drop
+        } else if (buffered + chunkBytes <= targetBytes) {
+            val inject = chunkBytes
+            queue.addFirst(ByteArray(inject))
+            inject
+        } else {
+            0
+        }
     }
 
     private fun bufferedBytesInternal(): Int = queue.sumOf { it.size }

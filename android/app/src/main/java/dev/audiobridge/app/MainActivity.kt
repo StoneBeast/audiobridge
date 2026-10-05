@@ -276,6 +276,7 @@ private fun SenderPane(onStart: () -> Unit, onStop: () -> Unit) {
 private fun ReceiverPane(onStart: () -> Unit, onStop: () -> Unit) {
     val state by AppBus.receiver.collectAsState()
     var port by remember { mutableStateOf(Settings.listenPort.toString()) }
+    var jitterMs by remember { mutableStateOf(Settings.jitterMs.toString()) }
     var volume by remember { mutableStateOf(1.0f) }
 
     // 每 500ms 拉取一次统计
@@ -307,11 +308,20 @@ private fun ReceiverPane(onStart: () -> Unit, onStop: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
         )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = jitterMs,
+            onValueChange = { jitterMs = it.filter { c -> c.isDigit() } },
+            label = { Text("缓冲水位 ms（默认 50；卡顿调大，求快调小）") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Button(
                 onClick = {
                     Settings.listenPort = port.toIntOrNull() ?: 48000
+                    Settings.jitterMs = (jitterMs.toIntOrNull() ?: 50).coerceIn(20, 300)
                     onStart()
                 },
                 enabled = !state.running,

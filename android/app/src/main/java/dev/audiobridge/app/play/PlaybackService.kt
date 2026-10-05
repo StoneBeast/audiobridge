@@ -157,7 +157,8 @@ class PlaybackService : Service() {
                     .build(),
             )
             .setTransferMode(AudioTrack.MODE_STREAM)
-            .setBufferSizeInBytes(maxOf(minBuf, chunk * 8))
+            // MODE_STREAM 下缓冲水位≈缓冲大小：3×20ms=60ms，是 PC→手机方向延迟的主要组成
+            .setBufferSizeInBytes(maxOf(minBuf, chunk * 3))
             .build()
         track = t
         t.play()
@@ -166,6 +167,8 @@ class PlaybackService : Service() {
             try {
                 while (active) {
                     jitter.pop(out)
+                    // 水位校准：补偿收发时钟漂移，把延迟钉在目标附近
+                    jitter.calibrate()
                     applyVolume(out)
                     val written = t.write(out, 0, out.size, AudioTrack.WRITE_BLOCKING)
                     if (written < 0) break

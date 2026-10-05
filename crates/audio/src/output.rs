@@ -20,8 +20,9 @@ pub struct SpeakerOutput {
     stalls: u32,
 }
 
-/// 播放缓冲时长（100ns 单位），80ms —— 延迟与稳定性的折中。
-const BUFFER_DURATION_HNS: i64 = 800_000;
+/// 播放缓冲时长（100ns 单位）。40ms：延迟与稳定性的折中——
+/// 稳态下缓冲内滞留的音频 ≈ 缓冲时长 - 1~2 帧，是端到端延迟的主要组成之一。
+const BUFFER_DURATION_HNS: i64 = 400_000;
 const MAX_STALLS: u32 = 30; // 30 * 100ms ≈ 3s 无响应则报错
 
 impl SpeakerOutput {
@@ -45,8 +46,8 @@ impl SpeakerOutput {
         let blockalign = format.get_blockalign() as usize;
         audio_client.start_stream()?;
 
-        // 预填 3/4 静音，避免启动瞬间播放未定义数据
-        let prime_frames = buffer_frames as usize * 3 / 4;
+        // 预填 1/2 静音，避免启动瞬间播放未定义数据，同时不引入过多初始延迟
+        let prime_frames = buffer_frames as usize / 2;
         let zeros = vec![0u8; prime_frames * blockalign];
         render_client.write_to_device(prime_frames, &zeros, None)?;
 

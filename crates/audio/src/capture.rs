@@ -31,7 +31,7 @@ impl LoopbackSource {
         let (def_time, _min_time) = audio_client.get_device_period()?;
         let mode = StreamMode::EventsShared {
             autoconvert: true,
-            buffer_duration_hns: def_time * 8,
+            buffer_duration_hns: def_time * 4, // 40ms：吸收突发即可，过大不增加延迟但也没收益
         };
         // 在渲染设备上以 Capture 方向初始化 -> 自动加 LOOPBACK 标志
         audio_client.initialize_client(&format, &Direction::Capture, &mode)?;

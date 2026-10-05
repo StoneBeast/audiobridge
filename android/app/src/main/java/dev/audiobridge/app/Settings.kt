@@ -58,6 +58,6 @@ object Settings {
         set(v) = p().edit().putBoolean(KEY_TEST_SOURCE, v).apply()
 
     object ProtocolDefaults {
-        const val TARGET_MS = 80
+        const val TARGET_MS = 50
     }
 }

@@ -254,7 +254,8 @@ class CaptureService : Service() {
                 val minBuf = AudioRecord.getMinBufferSize(
                     Protocol.SAMPLE_RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT,
                 )
-                val bufSize = maxOf(minBuf, Protocol.s16BytesPerMs(Protocol.SAMPLE_RATE, 2) * 100)
+                // 采集缓冲只是突发吸收器（FIFO 占用≈消费节奏），50ms 足够吸收网络抖动
+                val bufSize = maxOf(minBuf, Protocol.s16BytesPerMs(Protocol.SAMPLE_RATE, 2) * 50)
 
                 val record = AudioRecord.Builder()
                     .setAudioFormat(audioFormat)

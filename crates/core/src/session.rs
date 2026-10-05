@@ -347,6 +347,8 @@ where
                     {
                         let mut j = jitter.lock().unwrap();
                         j.pop(&mut buf);
+                        // 水位校准：补偿收发时钟漂移，把延迟钉在目标附近
+                        j.calibrate();
                         let st = j.stats();
                         upd(&stats, |s| {
                             s.buffered_ms = j.buffered_ms();

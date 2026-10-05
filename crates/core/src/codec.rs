@@ -32,8 +32,9 @@ pub const SAMPLE_RATE: u32 = 48_000;
 pub const CHANNELS: u8 = 2;
 /// 默认每个 DATA 帧承载的音频时长（毫秒）。
 pub const DEFAULT_FRAME_MS: u16 = 20;
-/// 默认接收端抖动缓冲目标水位（毫秒）。
-pub const DEFAULT_TARGET_MS: u16 = 80;
+/// 默认接收端抖动缓冲目标水位（毫秒）。50ms 在局域网下延迟/稳定的平衡点；
+/// WiFi 恶劣时可调高到 80~150，有线/USB 可低至 20~30。
+pub const DEFAULT_TARGET_MS: u16 = 50;
 /// 消息负载上限（帧头长度字段为 u16）。
 pub const MAX_PAYLOAD: usize = 65_535;
 /// 设备名最大字节数（UTF-8）。

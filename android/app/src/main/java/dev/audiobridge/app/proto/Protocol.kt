@@ -27,7 +27,7 @@ object Protocol {
     const val SAMPLE_RATE = 48_000
     const val CHANNELS = 2
     const val DEFAULT_FRAME_MS = 20
-    const val DEFAULT_TARGET_MS = 80
+    const val DEFAULT_TARGET_MS = 50
     const val MAX_PAYLOAD = 65_535
     const val MAX_NAME_LEN = 255
 
