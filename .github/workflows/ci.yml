@@ -30,3 +30,4 @@ jobs:
       - uses: gradle/actions/setup-gradle@v3
       - name: 单元测试 + Debug 构建
         run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon
+        working-directory: android
