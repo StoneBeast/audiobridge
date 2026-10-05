@@ -99,13 +99,20 @@ pub fn download(url: &str, dest: &Path, progress: &dyn Fn(u64, u64)) -> Result<(
     Ok(())
 }
 
-/// 原子替换当前 exe 并启动新版本（Windows 允许重命名正在运行的 exe）。
-pub fn apply_and_restart(new_exe: &Path) -> Result<()> {
+/// 原子替换当前 exe 为新版本（不重启；用于退出时落盘或就绪后手动应用）。
+pub fn apply_update_only(new_exe: &Path) -> Result<()> {
     let cur = std::env::current_exe()?;
     let old = cur.with_extension("exe.old");
     let _ = std::fs::remove_file(&old);
     std::fs::rename(&cur, &old).context("无法重命名当前程序（权限不足？）")?;
     std::fs::rename(new_exe, &cur).context("无法放置新版本文件")?;
+    Ok(())
+}
+
+/// 原子替换当前 exe 并启动新版本（Windows 允许重命名正在运行的 exe）。
+pub fn apply_and_restart(new_exe: &Path) -> Result<()> {
+    apply_update_only(new_exe)?;
+    let cur = std::env::current_exe()?;
     Command::new(&cur).spawn().context("无法启动新版本")?;
     Ok(())
 }

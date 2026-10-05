@@ -23,12 +23,15 @@ pub enum Role {
 #[derive(Default)]
 struct UpdateShared {
     info: Option<updater::UpdateManifest>,
+    /// 手动检查的结果提示（"检查更新中…" / "已是最新版本…" / 失败原因）。
     status: String,
+    status_at: Option<std::time::Instant>,
     downloading: bool,
     got: u64,
     total: u64,
+    /// 已下载完成、等待用户重启安装的新版本文件。
+    ready: Option<std::path::PathBuf>,
     error: Option<String>,
-    dismissed: bool,
 }
 
 struct SendSession {
@@ -76,28 +79,39 @@ impl AudioBridgeApp {
             log,
             status: String::new(),
         };
-        app.spawn_update_check();
+        app.spawn_update_check(false);
         app
     }
 
-    fn spawn_update_check(&self) {
+    /// 检查更新（启动时自动 + 标题栏手动）。
+    /// 手动检查时若发现新版本，清除用户之前「忽略」的版本（明确想看）。
+    fn spawn_update_check(&self, manual: bool) {
         let upd = Arc::clone(&self.update);
-        upd.lock().unwrap().status = "检查更新中…".into();
+        {
+            let mut g = upd.lock().unwrap();
+            g.status = "检查更新中…".into();
+            g.status_at = Some(std::time::Instant::now());
+        }
         std::thread::Builder::new()
             .name("ab-update-check".into())
             .spawn(move || match updater::check() {
                 Ok(Some(m)) => {
                     let mut g = upd.lock().unwrap();
+                    if manual {
+                        g.status.clear();
+                    }
                     g.info = Some(m);
-                    g.status.clear();
                 }
                 Ok(None) => {
                     let mut g = upd.lock().unwrap();
+                    g.info = None;
                     g.status = format!("已是最新版本 v{}", updater::current_version());
+                    g.status_at = Some(std::time::Instant::now());
                 }
                 Err(e) => {
                     let mut g = upd.lock().unwrap();
                     g.status = format!("检查更新失败: {e}");
+                    g.status_at = Some(std::time::Instant::now());
                 }
             })
             .ok();
@@ -131,18 +145,13 @@ impl AudioBridgeApp {
                     g.total = total;
                 });
                 match r {
-                    Ok(()) => match updater::apply_and_restart(&dest) {
-                        Ok(()) => {
-                            log::info!("更新完成，重启新版本");
-                            let _ = dest;
-                            std::process::exit(0);
-                        }
-                        Err(e) => {
-                            let mut g = upd.lock().unwrap();
-                            g.downloading = false;
-                            g.error = Some(format!("替换程序失败: {e}（可到 Releases 页手动下载）"));
-                        }
-                    },
+                    Ok(()) => {
+                        // 后台下载完成：不自动重启，横幅提示「重启并安装」；
+                        // 用户直接关闭程序时 Drop 也会完成替换
+                        let mut g = upd.lock().unwrap();
+                        g.downloading = false;
+                        g.ready = Some(dest);
+                    }
                     Err(e) => {
                         let mut g = upd.lock().unwrap();
                         g.downloading = false;
@@ -156,52 +165,77 @@ impl AudioBridgeApp {
     fn update_banner(&mut self, ui: &mut egui::Ui) {
         let snapshot = {
             let g = self.update.lock().unwrap();
-            if g.dismissed {
-                return;
-            }
-            let info = g.info.as_ref().map(|i| (i.version.clone(), i.notes.clone()));
             (
-                info,
+                g.info.clone(),
                 g.downloading,
                 g.got,
                 g.total,
+                g.ready.clone(),
                 g.error.clone(),
-                g.status.clone(),
             )
         };
-        let (info, downloading, got, total, error, _status) = snapshot;
-        let Some((version, notes)) = info else {
+        let (info, downloading, got, total, ready, error) = snapshot;
+        let Some(ref m) = info else {
             return;
         };
+        // 用户忽略过的版本不再自动提示（手动检查会清除忽略）
+        if m.version == self.settings.ignored_update_version {
+            return;
+        }
 
         egui::Frame::default()
             .fill(egui::Color32::from_rgb(0xFF, 0xF3, 0xD6))
             .inner_margin(6.0)
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "发现新版本 v{version}（当前 v{}）",
-                            updater::current_version()
-                        ))
-                        .strong(),
-                    );
-                    if downloading {
+                    if let Some(ref path) = ready {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "新版本 v{} 已下载完成（当前 v{}）",
+                                m.version,
+                                updater::current_version()
+                            ))
+                            .strong(),
+                        );
+                        if ui.button("重启并安装").clicked() {
+                            match updater::apply_and_restart(path) {
+                                Ok(()) => std::process::exit(0),
+                                Err(e) => {
+                                    self.update.lock().unwrap().error =
+                                        Some(format!("替换程序失败: {e}（可到 Releases 页手动下载）"));
+                                }
+                            }
+                        }
+                        ui.weak("（直接关闭程序也会在退出时完成更新）");
+                    } else if downloading {
+                        ui.label("正在后台下载更新…");
                         let frac = if total > 0 { got as f32 / total as f32 } else { 0.0 };
                         ui.add(
                             egui::ProgressBar::new(frac)
                                 .show_percentage()
-                                .desired_width(150.0),
+                                .desired_width(140.0),
                         );
-                    } else if error.is_none() && ui.button("下载并自动重启").clicked() {
-                        self.start_update_download();
-                    }
-                    if ui.small_button("忽略").clicked() {
-                        self.update.lock().unwrap().dismissed = true;
+                        ui.weak("（可继续使用，完成后在此提示）");
+                    } else {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "发现新版本 v{}（当前 v{}）",
+                                m.version,
+                                updater::current_version()
+                            ))
+                            .strong(),
+                        );
+                        if ui.button("更新").clicked() {
+                            self.start_update_download();
+                        }
+                        if ui.small_button("忽略此版本").clicked() {
+                            self.settings.ignored_update_version = m.version.clone();
+                            self.settings.save();
+                        }
                     }
                 });
-                if !notes.is_empty() {
-                    ui.label(egui::RichText::new(&notes).small());
+                if !m.notes.is_empty() {
+                    ui.label(egui::RichText::new(&m.notes).small());
                 }
                 if let Some(err) = &error {
                     ui.horizontal(|ui| {
@@ -556,12 +590,24 @@ impl eframe::App for AudioBridgeApp {
                 ui.heading("AudioBridge 音频桥");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.small_button("检查更新").clicked() {
-                        self.spawn_update_check();
+                        self.spawn_update_check(true);
                     }
                     if ui.small_button("清空日志").clicked() {
                         if let Ok(mut g) = self.log.lock() {
                             g.clear();
                         }
+                    }
+                    // 手动检查的反馈（6 秒后淡出，避免常驻噪音）
+                    let show_status = {
+                        let g = self.update.lock().unwrap();
+                        !g.status.is_empty()
+                            && g.status_at
+                                .map(|t| t.elapsed() < Duration::from_secs(6))
+                                .unwrap_or(false)
+                    };
+                    if show_status {
+                        let s = self.update.lock().unwrap().status.clone();
+                        ui.label(egui::RichText::new(&s).small().weak());
                     }
                 });
             });
@@ -597,6 +643,16 @@ impl Drop for AudioBridgeApp {
         }
         if let Some(s) = self.recv.take() {
             s.stop.store(true, Ordering::Relaxed);
+        }
+        // 已后台下载完成、尚未安装的更新：退出时完成替换，下次启动即新版本
+        if let Ok(g) = self.update.lock() {
+            if let Some(path) = &g.ready {
+                if let Err(e) = updater::apply_update_only(path) {
+                    log::warn!("退出时应用更新失败: {e}");
+                } else {
+                    log::info!("更新已在退出时应用，下次启动为新版本");
+                }
+            }
         }
         self.settings.save();
     }

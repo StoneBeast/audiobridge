@@ -20,6 +20,8 @@ pub struct Settings {
     pub volume_permille: u32,
     /// 本机显示名。
     pub device_name: String,
+    /// 用户选择「忽略」的更新版本号（该版本不再提示）。
+    pub ignored_update_version: String,
 }
 
 impl Default for Settings {
@@ -32,6 +34,7 @@ impl Default for Settings {
             token: String::new(),
             volume_permille: 1000,
             device_name: "Windows PC".into(),
+            ignored_update_version: String::new(),
         }
     }
 }

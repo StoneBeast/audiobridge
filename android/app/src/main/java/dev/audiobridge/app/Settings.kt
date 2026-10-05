@@ -12,6 +12,7 @@ object Settings {
     private const val KEY_JITTER_MS = "jitter_ms"
     private const val KEY_TOKEN = "token"
     private const val KEY_TEST_SOURCE = "test_source"
+    private const val KEY_IGNORED_UPDATE = "ignored_update_version"
 
     private var prefs: SharedPreferences? = null
 
@@ -56,6 +57,11 @@ object Settings {
     var testSource: Boolean
         get() = p().getBoolean(KEY_TEST_SOURCE, false)
         set(v) = p().edit().putBoolean(KEY_TEST_SOURCE, v).apply()
+
+    /** 用户选择「忽略此版本」的更新版本号（不再自动提示）。 */
+    var ignoredUpdateVersion: String
+        get() = p().getString(KEY_IGNORED_UPDATE, "") ?: ""
+        set(v) = p().edit().putString(KEY_IGNORED_UPDATE, v).apply()
 
     object ProtocolDefaults {
         const val TARGET_MS = 50

@@ -112,14 +112,115 @@ fun MainScreen(
     onStartReceive: () -> Unit,
     onStopReceive: () -> Unit,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
+
+    // —— 更新状态（头部"检查更新"与横幅共享）——
+    var updateInfo by remember { mutableStateOf<dev.audiobridge.app.util.AppUpdater.Info?>(null) }
+    var updatePhase by remember { mutableStateOf("idle") } // idle | downloading | ready
+    var updateProgress by remember { mutableStateOf(0f) }
+    var updateStatus by remember { mutableStateOf("") }
+    var downloadedFile by remember { mutableStateOf<java.io.File?>(null) }
+    var checkHint by remember { mutableStateOf("") }
+
+    fun manualCheck() {
+        checkHint = "检查更新中…"
+        Thread {
+            val r = runCatching { dev.audiobridge.app.util.AppUpdater.check(context) }.getOrNull()
+            if (r != null) {
+                if (Settings.ignoredUpdateVersion == r.version) {
+                    Settings.ignoredUpdateVersion = "" // 手动检查视为明确想看
+                }
+                updateInfo = r
+                checkHint = ""
+            } else {
+                checkHint = "已是最新版本 v${dev.audiobridge.app.util.AppUpdater.currentVersion(context)}"
+            }
+        }.start()
+    }
+
+    // 启动时自动检查（用户忽略过的版本不打扰）
+    LaunchedEffect(Unit) {
+        Thread {
+            val r = runCatching { dev.audiobridge.app.util.AppUpdater.check(context) }.getOrNull()
+            if (r != null && r.version != Settings.ignoredUpdateVersion) {
+                updateInfo = r
+            }
+        }.start()
+    }
+
+    LaunchedEffect(checkHint) {
+        if (checkHint.isNotEmpty()) {
+            delay(4000)
+            checkHint = ""
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        Text(
-            text = "AudioBridge 音频桥",
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(16.dp),
-        )
-        UpdateBanner()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 16.dp, end = 8.dp),
+        ) {
+            Text(
+                text = "AudioBridge 音频桥",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
+            )
+            androidx.compose.material3.TextButton(onClick = { manualCheck() }) {
+                Text("检查更新")
+            }
+        }
+        if (checkHint.isNotEmpty()) {
+            Text(
+                checkHint,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = 16.dp, bottom = 4.dp),
+            )
+        }
+
+        val cur = updateInfo
+        if (cur != null && cur.version != Settings.ignoredUpdateVersion) {
+            UpdateBanner(
+                info = cur,
+                phase = updatePhase,
+                progress = updateProgress,
+                statusText = updateStatus,
+                onDownload = {
+                    updatePhase = "downloading"
+                    updateStatus = "开始下载…"
+                    Thread {
+                        try {
+                            val f = dev.audiobridge.app.util.AppUpdater.download(
+                                context, cur.androidUrl,
+                            ) { got, total ->
+                                if (total > 0) {
+                                    updateProgress = got.toFloat() / total
+                                    updateStatus = "后台下载中 %.1f / %.1f MB".format(
+                                        got / 1048576.0, total / 1048576.0,
+                                    )
+                                }
+                            }
+                            downloadedFile = f
+                            updatePhase = "ready"
+                        } catch (e: Exception) {
+                            updatePhase = "idle"
+                            checkHint = "更新下载失败: ${e.message}"
+                        }
+                    }.start()
+                },
+                onInstall = {
+                    downloadedFile?.let {
+                        runCatching {
+                            dev.audiobridge.app.util.AppUpdater.installApk(context, it)
+                        }
+                    }
+                },
+                onIgnore = {
+                    Settings.ignoredUpdateVersion = cur.version
+                },
+            )
+        }
+
         TabRow(selectedTabIndex = tab) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("发送到电脑") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("接收电脑声音") })
@@ -132,76 +233,65 @@ fun MainScreen(
 }
 
 @Composable
-private fun UpdateBanner() {
+private fun UpdateBanner(
+    info: dev.audiobridge.app.util.AppUpdater.Info,
+    phase: String,
+    progress: Float,
+    statusText: String,
+    onDownload: () -> Unit,
+    onInstall: () -> Unit,
+    onIgnore: () -> Unit,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var info by remember {
-        mutableStateOf<dev.audiobridge.app.util.AppUpdater.Info?>(null)
-    }
-    var status by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var dismissed by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
-
-    LaunchedEffect(Unit) {
-        Thread {
-            val r = runCatching { dev.audiobridge.app.util.AppUpdater.check(context) }.getOrNull()
-            if (r != null) info = r
-        }.start()
-    }
-
-    val cur = info ?: return
-    if (dismissed) return
-
     Surface(color = Color(0xFFFFF3D6), modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                "发现新版本 v${cur.version}（当前 v${
-                    dev.audiobridge.app.util.AppUpdater.currentVersion(context)
-                }）",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            if (cur.notes.isNotBlank()) {
-                Text(cur.notes, style = MaterialTheme.typography.bodySmall)
-            }
-            if (busy) {
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp),
-                )
-                Text(status, style = MaterialTheme.typography.bodySmall)
-            } else {
-                Row {
-                    Button(
-                        onClick = {
-                            val target = cur
-                            busy = true
-                            status = "开始下载…"
-                            Thread {
-                                try {
-                                    val f = dev.audiobridge.app.util.AppUpdater.download(
-                                        context, target.androidUrl,
-                                    ) { got, total ->
-                                        if (total > 0) {
-                                            progress = got.toFloat() / total
-                                            status = "下载中 %.1f / %.1f MB".format(
-                                                got / 1048576.0, total / 1048576.0,
-                                            )
-                                        }
-                                    }
-                                    status = "下载完成，调起系统安装…"
-                                    dev.audiobridge.app.util.AppUpdater.installApk(context, f)
-                                    busy = false
-                                } catch (e: Exception) {
-                                    status = "更新失败: ${e.message}"
-                                    busy = false
-                                }
-                            }.start()
-                        },
-                    ) { Text("下载并安装") }
-                    Spacer(Modifier.width(8.dp))
-                    OutlinedButton(onClick = { dismissed = true }) { Text("忽略") }
+            when (phase) {
+                "ready" -> {
+                    Text(
+                        "新版本 v${info.version} 已下载完成（当前 v${
+                            dev.audiobridge.app.util.AppUpdater.currentVersion(context)
+                        }）",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Button(onClick = onInstall) { Text("安装更新") }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "调起系统安装器，按提示确认",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                "downloading" -> {
+                    Text(
+                        "正在后台下载更新…（可继续使用，完成后在此提示）",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp),
+                    )
+                    if (statusText.isNotEmpty()) {
+                        Text(statusText, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                else -> {
+                    Text(
+                        "发现新版本 v${info.version}（当前 v${
+                            dev.audiobridge.app.util.AppUpdater.currentVersion(context)
+                        }）",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (info.notes.isNotBlank()) {
+                        Text(info.notes, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Row {
+                        Button(onClick = onDownload) { Text("更新（后台下载）") }
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(onClick = onIgnore) { Text("忽略此版本") }
+                    }
                 }
             }
         }

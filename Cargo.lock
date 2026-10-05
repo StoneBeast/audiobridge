@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "audiobridge-audio"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "audiobridge-core",
  "log",
@@ -487,7 +487,7 @@ dependencies = [
 
 [[package]]
 name = "audiobridge-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "audiobridge-audio",
  "audiobridge-core",
@@ -497,7 +497,7 @@ dependencies = [
 
 [[package]]
 name = "audiobridge-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "if-addrs",
  "log",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "audiobridge-desktop"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "audiobridge-audio",
