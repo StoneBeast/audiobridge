@@ -66,9 +66,18 @@ class CaptureService : Service() {
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    // 以下资源在工作线程创建、可能被主线程（停止按钮/onDestroy）关闭，需 @Volatile
+    @Volatile
     private var projection: MediaProjection? = null
+
+    @Volatile
     private var record: AudioRecord? = null
+
+    @Volatile
     private var sender: StreamSender? = null
+
+    @Volatile
     private var captureThread: Thread? = null
 
     @Volatile
@@ -152,26 +161,29 @@ class CaptureService : Service() {
     private fun startTestCapture() {
         val host = Settings.host
         val port = Settings.port
-        val s = StreamSender(host, port, hello())
-        s.connect()
-        sender = s
-
         val chunkBytes = Protocol.s16BytesPerMs(Protocol.SAMPLE_RATE, 2) * Protocol.DEFAULT_FRAME_MS
-        val tone = dev.audiobridge.app.util.TestToneSource(Protocol.DEFAULT_FRAME_MS)
-        val buf = ByteArray(chunkBytes)
-        active = true
-        AppBus.updateSender {
-            it.copy(running = true, connected = true, peer = "$host:$port", error = null, sentBytes = 0, sentSeconds = 0)
-        }
-        Log.i(TAG, "test-source streaming -> $host:$port")
         captureThread = thread(name = "ab-capture-test") {
-            var sent = 0L
-            val startedAt = System.currentTimeMillis()
+            var s: StreamSender? = null
             try {
+                // 网络连接必须在子线程：主线程做 Socket.connect 会抛 NetworkOnMainThreadException
+                val sender = StreamSender(host, port, hello())
+                sender.connect()
+                s = sender
+                this@CaptureService.sender = sender
+
+                val tone = dev.audiobridge.app.util.TestToneSource(Protocol.DEFAULT_FRAME_MS)
+                val buf = ByteArray(chunkBytes)
+                active = true
+                AppBus.updateSender {
+                    it.copy(running = true, connected = true, peer = "$host:$port", error = null, sentBytes = 0, sentSeconds = 0)
+                }
+                Log.i(TAG, "test-source streaming -> $host:$port")
+                var sent = 0L
+                val startedAt = System.currentTimeMillis()
                 while (active) {
                     val n = tone.read(buf)
                     if (n > 0) {
-                        s.sendAudio(buf, 0, n)
+                        sender.sendAudio(buf, 0, n)
                         sent += n
                         if (sent % (chunkBytes * 25L) == 0L) {
                             val sec = (System.currentTimeMillis() - startedAt) / 1000
@@ -179,14 +191,20 @@ class CaptureService : Service() {
                         }
                     }
                 }
-            } catch (e: Exception) {
-                if (active) {
-                    Log.e(TAG, "send loop error", e)
-                    AppBus.updateSender { it.copy(error = "发送中断: ${e.message}", connected = false) }
+            } catch (e: Throwable) {
+                Log.e(TAG, "test-source stream failed", e)
+                val detail = e.message?.takeIf { it.isNotBlank() }
+                    ?: "(系统未返回原因: ${e.javaClass.simpleName})"
+                AppBus.updateSender {
+                    it.copy(
+                        running = false, connected = false,
+                        error = if (active) "发送中断: $detail" else "启动失败: $detail",
+                    )
                 }
             } finally {
                 active = false
-                runCatching { s.close() }
+                runCatching { s?.close() }
+                this@CaptureService.sender = null
                 AppBus.updateSender { it.copy(running = false, connected = false) }
                 mainHandler.post { stopSelf() }
             }
@@ -195,69 +213,80 @@ class CaptureService : Service() {
 
     private fun startCapture(resultCode: Int, data: Intent) {
         val sm = getSystemService(MediaProjectionManager::class.java)
-        val mp = sm.getMediaProjection(resultCode, data)
-        projection = mp
-        mp.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                Log.i(TAG, "media projection stopped by system/user")
-                mainHandler.post {
-                    stopCapture()
-                    stopSelf()
-                }
-            }
-        }, mainHandler)
-
-        val captureConfig = AudioPlaybackCaptureConfiguration.Builder(mp)
-            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-            .addMatchingUsage(AudioAttributes.USAGE_GAME)
-            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
-            .build()
-
-        val audioFormat = AudioFormat.Builder()
-            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-            .setSampleRate(Protocol.SAMPLE_RATE)
-            .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
-            .build()
-
-        val minBuf = AudioRecord.getMinBufferSize(
-            Protocol.SAMPLE_RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT,
-        )
-        val bufSize = maxOf(minBuf, Protocol.s16BytesPerMs(Protocol.SAMPLE_RATE, 2) * 100)
-
-        val rec = AudioRecord.Builder()
-            .setAudioFormat(audioFormat)
-            .setBufferSizeInBytes(bufSize)
-            .setAudioPlaybackCaptureConfig(captureConfig)
-            .build()
-        if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            rec.release()
-            throw IllegalStateException("AudioRecord 初始化失败（系统音频捕获不可用）")
-        }
-        record = rec
-
         val host = Settings.host
         val port = Settings.port
-        val s = StreamSender(host, port, hello())
-        s.connect() // 失败会抛出，交由 onStartCommand 兜底
-        sender = s
-
         val chunkBytes = Protocol.s16BytesPerMs(Protocol.SAMPLE_RATE, 2) * Protocol.DEFAULT_FRAME_MS
-        val buf = ByteArray(chunkBytes)
-        rec.startRecording()
-        active = true
-        AppBus.updateSender {
-            it.copy(running = true, connected = true, peer = "$host:$port", error = null, sentBytes = 0, sentSeconds = 0)
-        }
-        Log.i(TAG, "capturing -> $host:$port (chunk=$chunkBytes bytes)")
 
+        // 注意：本方法只做线程调度。getMediaProjection/AudioRecord/Socket.connect
+        // 全部在工作线程执行——Socket 操作放主线程会抛 NetworkOnMainThreadException。
+        // API 34 要求的时序（startForeground 之后才能 getMediaProjection）已满足：
+        // startAsForeground 在 onStartCommand（主线程）里同步完成后才进入这里。
         captureThread = thread(name = "ab-capture") {
-            var sent = 0L
-            val startedAt = System.currentTimeMillis()
+            var mp: MediaProjection? = null
+            var rec: AudioRecord? = null
+            var s: StreamSender? = null
             try {
+                val projection = sm.getMediaProjection(resultCode, data)
+                mp = projection
+                this@CaptureService.projection = projection
+                projection.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        Log.i(TAG, "media projection stopped by system/user")
+                        mainHandler.post {
+                            stopCapture()
+                            stopSelf()
+                        }
+                    }
+                }, mainHandler)
+
+                val captureConfig = AudioPlaybackCaptureConfiguration.Builder(projection)
+                    .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                    .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                    .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                    .build()
+
+                val audioFormat = AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(Protocol.SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+                    .build()
+
+                val minBuf = AudioRecord.getMinBufferSize(
+                    Protocol.SAMPLE_RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT,
+                )
+                val bufSize = maxOf(minBuf, Protocol.s16BytesPerMs(Protocol.SAMPLE_RATE, 2) * 100)
+
+                val record = AudioRecord.Builder()
+                    .setAudioFormat(audioFormat)
+                    .setBufferSizeInBytes(bufSize)
+                    .setAudioPlaybackCaptureConfig(captureConfig)
+                    .build()
+                if (record.state != AudioRecord.STATE_INITIALIZED) {
+                    record.release()
+                    throw IllegalStateException("AudioRecord 初始化失败（此设备的系统不支持音频回采，可改用「测试源模式」验证链路）")
+                }
+                rec = record
+                this@CaptureService.record = record
+
+                val sender = StreamSender(host, port, hello())
+                sender.connect()
+                s = sender
+                this@CaptureService.sender = sender
+
+                val buf = ByteArray(chunkBytes)
+                record.startRecording()
+                active = true
+                AppBus.updateSender {
+                    it.copy(running = true, connected = true, peer = "$host:$port", error = null, sentBytes = 0, sentSeconds = 0)
+                }
+                Log.i(TAG, "capturing -> $host:$port (chunk=$chunkBytes bytes)")
+
+                var sent = 0L
+                val startedAt = System.currentTimeMillis()
                 while (active) {
-                    val n = rec.read(buf, 0, buf.size)
+                    val n = record.read(buf, 0, buf.size)
                     if (n > 0) {
-                        s.sendAudio(buf, 0, n)
+                        sender.sendAudio(buf, 0, n)
                         sent += n
                         if (sent % (chunkBytes * 25L) == 0L) { // ~每秒更新一次
                             val sec = (System.currentTimeMillis() - startedAt) / 1000
@@ -267,15 +296,25 @@ class CaptureService : Service() {
                         break
                     }
                 }
-            } catch (e: Exception) {
-                if (active) {
-                    Log.e(TAG, "send loop error", e)
-                    AppBus.updateSender { it.copy(error = "发送中断: ${e.message}", connected = false) }
+            } catch (e: Throwable) {
+                Log.e(TAG, "capture stream failed", e)
+                val detail = e.message?.takeIf { it.isNotBlank() }
+                    ?: "(系统未返回原因: ${e.javaClass.simpleName})"
+                AppBus.updateSender {
+                    it.copy(
+                        running = false, connected = false,
+                        error = if (active) "发送中断: $detail" else "启动失败: $detail",
+                    )
                 }
             } finally {
                 active = false
-                runCatching { rec.stop() }
-                runCatching { s.close() }
+                runCatching { rec?.stop() }
+                runCatching { rec?.release() }
+                runCatching { s?.close() }
+                runCatching { mp?.stop() }
+                this@CaptureService.record = null
+                this@CaptureService.sender = null
+                this@CaptureService.projection = null
                 AppBus.updateSender { it.copy(running = false, connected = false) }
                 mainHandler.post { stopSelf() }
             }
