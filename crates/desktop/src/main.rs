@@ -1,3 +1,7 @@
+// release 构建使用 Windows GUI 子系统：启动时不弹出黑色控制台窗口；
+// debug 构建保留控制台便于开发调试。
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod adb;
 mod app;
 mod logbuf;

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动图标背景：Material3 主紫色，与 App 内主题一致 -->
+    <color name="ic_launcher_background">#6750A4</color>
+</resources>

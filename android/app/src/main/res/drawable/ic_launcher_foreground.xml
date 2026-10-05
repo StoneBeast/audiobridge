@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标前景：Material volume_up 图形，等比缩放至 108x108 视口中央，
+     全部内容落在 66x66 安全区内（24 * 1.9 = 45.6，角半径 32 < 33） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="1.9"
+        android:scaleY="1.9"
+        android:translateX="31.2"
+        android:translateY="31.2">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M3,9v6h4l5,5V4L7,9H3z M16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v8.05c1.48,-0.74 2.5,-2.26 2.5,-4.02z M14,3.23v2.06c2.89,0.86 5,3.54 5,6.71s-2.11,5.85 -5,6.71v2.06c4.01,-0.91 7,-4.49 7,-8.77s-2.99,-7.86 -7,-8.77z" />
+    </group>
+</vector>
